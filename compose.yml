@@ -1,0 +1,20 @@
+services:
+  api:
+    image: keksmd/task_decomposition:0.0.0-260101
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      TERM: ${TERM:-xterm}
+      TZ: ${TZ:-UTC}
+      TASKDECOMP_API_PORT: ${TASKDECOMP_API_PORT:-8000}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - "./volumes/configs/task_decomposition:${TASKDECOMP_API_CONFIGS_DIR:-/etc/task_decomposition}"
+      - "./volumes/storage/task_decomposition/logs:${TASKDECOMP_API_LOGS_DIR:-/var/log/task_decomposition}"
+      - "./volumes/storage/task_decomposition/data:${TASKDECOMP_API_DATA_DIR:-/var/lib/task_decomposition}"
+    ports:
+      - "${TASKDECOMP_API_PORT:-8000}:${TASKDECOMP_API_PORT:-8000}"
+    tty: true
