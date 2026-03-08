@@ -1,0 +1,189 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - '**'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 1. Test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        env:
+          PIP_NEXUS_CONFIG: ${{ secrets.PIP_NEXUS_CONFIG }}
+        run: |
+          python -m pip install -U pip
+          if [ -n "${PIP_NEXUS_CONFIG:-}" ]; then
+            printf '%s\n' "$PIP_NEXUS_CONFIG" > "$RUNNER_TEMP/pip.conf"
+            export PIP_CONFIG_FILE="$RUNNER_TEMP/pip.conf"
+          fi
+          python -m pip install -r requirements.txt
+          python -m pip install -r ./requirements/requirements.test.txt
+
+      - name: Test with pytest
+        run: python -m pytest --junitxml test-results.xml
+
+      - name: Publish test report
+        if: ${{ always() }}
+        uses: dorny/test-reporter@v2
+        with:
+          name: pytest
+          path: test-results.xml
+          reporter: java-junit
+          fail-on-error: false
+
+  sonar:
+    name: 1.1. Sonar (develop)
+    runs-on: ubuntu-24.04
+    needs: test
+    if: ${{ github.event_name != 'pull_request' && github.ref_name == 'master' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check sonar-project.properties
+        id: sonar_props
+        run: |
+          if [ -f sonar-project.properties ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: SonarQube Scan
+        if: ${{ steps.sonar_props.outputs.exists == 'true' }}
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  build_publish:
+    name: 2. Build and Publish
+    runs-on: ubuntu-24.04
+    needs: test
+    if: ${{ github.event_name != 'pull_request' && (github.ref_name == 'develop' || github.ref_name == 'master') }}
+    permissions:
+      contents: read
+    env:
+      REGISTRY_HOST: nexus.dada-tuda.ru
+      IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY || 'task_decomposition' }}
+    outputs:
+      image_tag: ${{ steps.image_tag.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Compute image tag
+        id: image_tag
+        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+            type=ref,event=branch
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          image: tonistiigi/binfmt:qemu-v7.0.0-28
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Nexus Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}:cache-latest
+          cache-to: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}:cache-latest,mode=max
+
+  update_argo_repo:
+    name: 3. Update Argo Repo
+    runs-on: ubuntu-24.04
+    needs: build_publish
+    if: ${{ github.event_name != 'pull_request' && (github.ref_name == 'develop' || github.ref_name == 'master') }}
+    permissions:
+      contents: read
+    env:
+      PROJECT_NAME: ${{ vars.NEXUS_DOCKER_REPOSITORY || 'task_decomposition' }}
+    steps:
+      - name: Update image tag in Argo repo
+        env:
+          ARGO_REPO_URL: ${{ secrets.ARGO_REPO_URL }}
+          ARGO_REPO_USERNAME: ${{ secrets.ARGO_REPO_USERNAME }}
+          ARGO_REPO_PASSWORD: ${{ secrets.ARGO_REPO_PASSWORD }}
+          IMAGE_TAG: ${{ needs.build_publish.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${ARGO_REPO_URL}" != https://* ]]; then
+            echo "ARGO_REPO_URL must be HTTPS when using git credentials"
+            exit 1
+          fi
+          AUTH_REPO_URL="https://${ARGO_REPO_USERNAME}:${ARGO_REPO_PASSWORD}@${ARGO_REPO_URL#https://}"
+
+          if [ "${GITHUB_REF_NAME}" = "master" ]; then
+            VALUES_PATH="helm/python/services/${PROJECT_NAME}/values-prod.yaml"
+          else
+            VALUES_PATH="helm/python/services/${PROJECT_NAME}/values-dev.yaml"
+          fi
+
+          rm -rf /tmp/argo-repo
+          git clone "${AUTH_REPO_URL}" /tmp/argo-repo
+          cd /tmp/argo-repo
+
+          if [ ! -f "${VALUES_PATH}" ]; then
+            echo "Values file not found: ${VALUES_PATH}"
+            exit 1
+          fi
+
+          if grep -qE '^[[:space:]]*tag:' "${VALUES_PATH}"; then
+            sed -Ei "s#^([[:space:]]*tag:[[:space:]]*).*\$#\\1${IMAGE_TAG}#g" "${VALUES_PATH}"
+          else
+            printf '\nimage:\n  tag: %s\n' "${IMAGE_TAG}" >> "${VALUES_PATH}"
+          fi
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add "${VALUES_PATH}"
+          if ! git diff --staged --quiet; then
+            git commit -m "ci: update ${PROJECT_NAME} image tag to ${IMAGE_TAG}"
+            git push "${AUTH_REPO_URL}" HEAD
+          fi
