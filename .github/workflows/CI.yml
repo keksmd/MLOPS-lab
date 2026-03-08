@@ -55,24 +55,14 @@ jobs:
     name: 1.1. Sonar (develop)
     runs-on: ubuntu-24.04
     needs: test
-    if: ${{ github.event_name != 'pull_request' && github.ref_name == 'develop' }}
+    if: ${{ github.event_name != 'pull_request' && github.ref_name == 'develop' && hashFiles('sonar-project.properties') != '' }}
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Check sonar-project.properties
-        id: sonar_props
-        run: |
-          if [ -f sonar-project.properties ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: SonarQube Scan
-        if: ${{ steps.sonar_props.outputs.exists == 'true' }}
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -124,3 +114,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/task_decomposition:cache-latest
           cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/task_decomposition:cache-latest,mode=max
+          secrets: |
+            HASH_PASSWORD=${{ secrets.DOCKER_UID_HASH_PASSWORD }}
