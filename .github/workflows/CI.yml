@@ -52,7 +52,7 @@ jobs:
           fail-on-error: false
 
   sonar:
-    name: 1.1. Sonar (develop)
+    name: 1.1. Sonar (master)
     runs-on: ubuntu-24.04
     needs: test
     if: ${{ github.event_name != 'pull_request' && github.ref_name == 'master' }}
@@ -87,7 +87,8 @@ jobs:
       contents: read
     env:
       REGISTRY_HOST: nexus.dada-tuda.ru
-      IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY || 'task_decomposition' }}
+      BACKEND_IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY_BACKEND || 'backend' }}
+      FRONTEND_IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY_FRONTEND || 'frontend' }}
     outputs:
       image_tag: ${{ steps.image_tag.outputs.value }}
     steps:
@@ -98,11 +99,21 @@ jobs:
         id: image_tag
         run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: Docker metadata
-        id: meta
+      - name: Docker metadata (backend)
+        id: meta_backend
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}
+          images: ${{ env.REGISTRY_HOST }}/dada/${{ env.BACKEND_IMAGE_REPO }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+            type=ref,event=branch
+
+      - name: Docker metadata (frontend)
+        id: meta_frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_HOST }}/dada/${{ env.FRONTEND_IMAGE_REPO }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -123,17 +134,31 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./backend/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}:cache-latest
-          cache-to: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}:cache-latest,mode=max
+          tags: ${{ steps.meta_backend.outputs.tags }}
+          labels: ${{ steps.meta_backend.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.BACKEND_IMAGE_REPO }}:cache-latest
+          cache-to: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.BACKEND_IMAGE_REPO }}:cache-latest,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./frontend/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta_frontend.outputs.tags }}
+          labels: ${{ steps.meta_frontend.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.FRONTEND_IMAGE_REPO }}:cache-latest
+          cache-to: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.FRONTEND_IMAGE_REPO }}:cache-latest,mode=max
+          build-args: |
+            VITE_API_URL=${{ vars.FRONTEND_VITE_API_URL || 'https://api.example.com' }}
 
   update_argo_repo:
     name: 3. Update Argo Repo
@@ -143,7 +168,8 @@ jobs:
     permissions:
       contents: read
     env:
-      PROJECT_NAME: ${{ vars.NEXUS_DOCKER_REPOSITORY || 'task_decomposition' }}
+      BACKEND_IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY_BACKEND || 'backend' }}
+      FRONTEND_IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY_FRONTEND || 'frontend' }}
     steps:
       - name: Update image tag in Argo repo
         env:
@@ -157,33 +183,62 @@ jobs:
             echo "ARGO_REPO_URL must be HTTPS when using git credentials"
             exit 1
           fi
-          AUTH_REPO_URL="https://${ARGO_REPO_USERNAME}:${ARGO_REPO_PASSWORD}@${ARGO_REPO_URL#https://}"
+          if [ -z "${ARGO_REPO_USERNAME}" ] || [ -z "${ARGO_REPO_PASSWORD}" ]; then
+            echo "ARGO_REPO_USERNAME/ARGO_REPO_PASSWORD are required"
+            exit 1
+          fi
+          CLEAN_REPO_URL="https://${ARGO_REPO_URL#https://}"
+
+          cat > /tmp/git-askpass.sh <<'ASKPASS'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) echo "$ARGO_REPO_USERNAME" ;;
+            *Password*) echo "$ARGO_REPO_PASSWORD" ;;
+            *) echo "" ;;
+          esac
+          ASKPASS
+          chmod 700 /tmp/git-askpass.sh
+          export GIT_ASKPASS=/tmp/git-askpass.sh
+          export GIT_TERMINAL_PROMPT=0
 
           if [ "${GITHUB_REF_NAME}" = "master" ]; then
-            VALUES_PATH="helm/python/services/${PROJECT_NAME}/values-prod.yaml"
+            BACKEND_VALUES_PATH="helm/python/services/${BACKEND_IMAGE_REPO}/values-prod.yaml"
+            FRONTEND_VALUES_PATH="helm/python/services/${FRONTEND_IMAGE_REPO}/values-prod.yaml"
           else
-            VALUES_PATH="helm/python/services/${PROJECT_NAME}/values-dev.yaml"
+            BACKEND_VALUES_PATH="helm/python/services/${BACKEND_IMAGE_REPO}/values-dev.yaml"
+            FRONTEND_VALUES_PATH="helm/python/services/${FRONTEND_IMAGE_REPO}/values-dev.yaml"
           fi
 
           rm -rf /tmp/argo-repo
-          git clone "${AUTH_REPO_URL}" /tmp/argo-repo
+          git clone "${CLEAN_REPO_URL}" /tmp/argo-repo
           cd /tmp/argo-repo
 
-          if [ ! -f "${VALUES_PATH}" ]; then
-            echo "Values file not found: ${VALUES_PATH}"
+          if [ ! -f "${BACKEND_VALUES_PATH}" ]; then
+            echo "Values file not found: ${BACKEND_VALUES_PATH}"
             exit 1
           fi
 
-          if grep -qE '^[[:space:]]*tag:' "${VALUES_PATH}"; then
-            sed -Ei "s#^([[:space:]]*tag:[[:space:]]*).*\$#\\1${IMAGE_TAG}#g" "${VALUES_PATH}"
+          if [ ! -f "${FRONTEND_VALUES_PATH}" ]; then
+            echo "Values file not found: ${FRONTEND_VALUES_PATH}"
+            exit 1
+          fi
+
+          if grep -qE '^[[:space:]]*tag:' "${BACKEND_VALUES_PATH}"; then
+            sed -Ei "s#^([[:space:]]*tag:[[:space:]]*).*\$#\\1${IMAGE_TAG}#g" "${BACKEND_VALUES_PATH}"
           else
-            printf '\nimage:\n  tag: %s\n' "${IMAGE_TAG}" >> "${VALUES_PATH}"
+            printf '\nimage:\n  tag: %s\n' "${IMAGE_TAG}" >> "${BACKEND_VALUES_PATH}"
+          fi
+
+          if grep -qE '^[[:space:]]*tag:' "${FRONTEND_VALUES_PATH}"; then
+            sed -Ei "s#^([[:space:]]*tag:[[:space:]]*).*\$#\\1${IMAGE_TAG}#g" "${FRONTEND_VALUES_PATH}"
+          else
+            printf '\nimage:\n  tag: %s\n' "${IMAGE_TAG}" >> "${FRONTEND_VALUES_PATH}"
           fi
 
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add "${VALUES_PATH}"
+          git add "${BACKEND_VALUES_PATH}" "${FRONTEND_VALUES_PATH}"
           if ! git diff --staged --quiet; then
-            git commit -m "ci: update ${PROJECT_NAME} image tag to ${IMAGE_TAG}"
-            git push "${AUTH_REPO_URL}" HEAD
+            git commit -m "ci: update backend/frontend image tags to ${IMAGE_TAG}"
+            git push origin HEAD
           fi
