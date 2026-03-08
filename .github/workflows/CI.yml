@@ -55,7 +55,7 @@ jobs:
     name: 1.1. Sonar (develop)
     runs-on: ubuntu-24.04
     needs: test
-    if: ${{ github.event_name != 'pull_request' && github.ref_name == 'develop' }}
+    if: ${{ github.event_name != 'pull_request' && github.ref_name == 'master' }}
     permissions:
       contents: read
     steps:
