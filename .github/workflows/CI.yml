@@ -88,21 +88,15 @@ jobs:
     env:
       REGISTRY_HOST: nexus.dada-tuda.ru
       IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY || 'task_decomposition' }}
-    outputs:
-      image_tag: ${{ steps.image_tag.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Compute image tag
-        id: image_tag
-        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}
+          images: ${{ env.REGISTRY_HOST }}/${{ env.IMAGE_REPO }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -132,58 +126,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}:cache-latest
-          cache-to: type=registry,ref=${{ env.REGISTRY_HOST }}/dada/${{ env.IMAGE_REPO }}:cache-latest,mode=max
-
-  update_argo_repo:
-    name: 3. Update Argo Repo
-    runs-on: ubuntu-24.04
-    needs: build_publish
-    if: ${{ github.event_name != 'pull_request' && (github.ref_name == 'develop' || github.ref_name == 'master') }}
-    permissions:
-      contents: read
-    env:
-      PROJECT_NAME: ${{ vars.NEXUS_DOCKER_REPOSITORY || 'task_decomposition' }}
-    steps:
-      - name: Update image tag in Argo repo
-        env:
-          ARGO_REPO_URL: ${{ secrets.ARGO_REPO_URL }}
-          ARGO_REPO_USERNAME: ${{ secrets.ARGO_REPO_USERNAME }}
-          ARGO_REPO_PASSWORD: ${{ secrets.ARGO_REPO_PASSWORD }}
-          IMAGE_TAG: ${{ needs.build_publish.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-          if [[ "${ARGO_REPO_URL}" != https://* ]]; then
-            echo "ARGO_REPO_URL must be HTTPS when using git credentials"
-            exit 1
-          fi
-          AUTH_REPO_URL="https://${ARGO_REPO_USERNAME}:${ARGO_REPO_PASSWORD}@${ARGO_REPO_URL#https://}"
-
-          if [ "${GITHUB_REF_NAME}" = "master" ]; then
-            VALUES_PATH="helm/python/services/${PROJECT_NAME}/values-prod.yaml"
-          else
-            VALUES_PATH="helm/python/services/${PROJECT_NAME}/values-dev.yaml"
-          fi
-
-          rm -rf /tmp/argo-repo
-          git clone "${AUTH_REPO_URL}" /tmp/argo-repo
-          cd /tmp/argo-repo
-
-          if [ ! -f "${VALUES_PATH}" ]; then
-            echo "Values file not found: ${VALUES_PATH}"
-            exit 1
-          fi
-
-          if grep -qE '^[[:space:]]*tag:' "${VALUES_PATH}"; then
-            sed -Ei "s#^([[:space:]]*tag:[[:space:]]*).*\$#\\1${IMAGE_TAG}#g" "${VALUES_PATH}"
-          else
-            printf '\nimage:\n  tag: %s\n' "${IMAGE_TAG}" >> "${VALUES_PATH}"
-          fi
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add "${VALUES_PATH}"
-          if ! git diff --staged --quiet; then
-            git commit -m "ci: update ${PROJECT_NAME} image tag to ${IMAGE_TAG}"
-            git push "${AUTH_REPO_URL}" HEAD
-          fi
+          cache-from: type=registry,ref=${{ env.REGISTRY_HOST }}/${{ env.IMAGE_REPO }}:cache-latest
+          cache-to: type=registry,ref=${{ env.REGISTRY_HOST }}/${{ env.IMAGE_REPO }}:cache-latest,mode=max
