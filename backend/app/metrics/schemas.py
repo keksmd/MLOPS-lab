@@ -85,6 +85,7 @@ class JudgeMetricScores(BaseModel):
     critical_failure: bool
 
     critical_missing_steps: list[str] = Field(default_factory=list)
+    underspecified_steps: list[str] = Field(default_factory=list)
     unnecessary_actions: list[str] = Field(default_factory=list)
     bad_arguments: list[str] = Field(default_factory=list)
     duplicate_step_notes: list[str] = Field(default_factory=list)
