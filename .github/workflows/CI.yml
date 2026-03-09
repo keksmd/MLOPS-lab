@@ -168,7 +168,7 @@ jobs:
 
       - name: Compute image tag
         id: image_tag
-        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "value=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Compute image names
         id: image_names
@@ -184,7 +184,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.image_tag.outputs.value }}
             type=raw,value=latest
-            type=ref,event=branch
 
       - name: Docker metadata (frontend)
         id: meta_frontend
@@ -194,7 +193,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.image_tag.outputs.value }}
             type=raw,value=latest
-            type=ref,event=branch
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
