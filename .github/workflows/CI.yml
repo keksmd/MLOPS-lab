@@ -284,11 +284,9 @@ jobs:
           export GIT_TERMINAL_PROMPT=0
 
           if [ "${GITHUB_REF_NAME}" = "master" ]; then
-            BACKEND_VALUES_PATH="${BACKEND_VALUES_DIR}/values-prod.yaml"
-            FRONTEND_VALUES_PATH="${FRONTEND_VALUES_DIR}/values-prod.yaml"
-          else
-            BACKEND_VALUES_PATH="${BACKEND_VALUES_DIR}/values-dev.yaml"
-            FRONTEND_VALUES_PATH="${FRONTEND_VALUES_DIR}/values-dev.yaml"
+            BACKEND_VALUES_PATH="${BACKEND_VALUES_DIR}/values.yaml"
+            FRONTEND_VALUES_PATH="${FRONTEND_VALUES_DIR}/values.yaml"
+
           fi
 
           update_image_values() {
