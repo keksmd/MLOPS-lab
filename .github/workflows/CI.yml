@@ -168,7 +168,7 @@ jobs:
 
       - name: Compute image tag
         id: image_tag
-        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "value=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Compute image names
         id: image_names
@@ -184,7 +184,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.image_tag.outputs.value }}
             type=raw,value=latest
-            type=ref,event=branch
 
       - name: Docker metadata (frontend)
         id: meta_frontend
@@ -194,7 +193,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.image_tag.outputs.value }}
             type=raw,value=latest
-            type=ref,event=branch
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -220,8 +218,6 @@ jobs:
           push: true
           tags: ${{ steps.meta_backend.outputs.tags }}
           labels: ${{ steps.meta_backend.outputs.labels }}
-          cache-from: type=registry,ref=${{ steps.image_names.outputs.backend }}:cache-latest
-          cache-to: type=registry,ref=${{ steps.image_names.outputs.backend }}:cache-latest,mode=max
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
@@ -232,8 +228,6 @@ jobs:
           push: true
           tags: ${{ steps.meta_frontend.outputs.tags }}
           labels: ${{ steps.meta_frontend.outputs.labels }}
-          cache-from: type=registry,ref=${{ steps.image_names.outputs.frontend }}:cache-latest
-          cache-to: type=registry,ref=${{ steps.image_names.outputs.frontend }}:cache-latest,mode=max
           build-args: |
             VITE_API_URL=${{ vars.FRONTEND_VITE_API_URL || 'http://localhost:8000' }}
 
