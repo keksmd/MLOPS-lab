@@ -156,8 +156,8 @@ jobs:
     env:
       REGISTRY_HOST: nexus.dada-tuda.ru
       REGISTRY_NAMESPACE: dada
-      BACKEND_IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY_BACKEND || 'backend' }}
-      FRONTEND_IMAGE_REPO: ${{ vars.NEXUS_DOCKER_REPOSITORY_FRONTEND || 'frontend' }}
+      BACKEND_IMAGE_REPO: task-decomposition-backend
+      FRONTEND_IMAGE_REPO: task-decomposition-frontend
     outputs:
       image_tag: ${{ steps.image_tag.outputs.value }}
       backend_repository: ${{ steps.image_names.outputs.backend }}
@@ -246,8 +246,8 @@ jobs:
     permissions:
       contents: read
     env:
-      BACKEND_SERVICE: ${{ vars.ARGO_BACKEND_SERVICE || vars.NEXUS_DOCKER_REPOSITORY_BACKEND || 'backend' }}
-      FRONTEND_SERVICE: ${{ vars.ARGO_FRONTEND_SERVICE || vars.NEXUS_DOCKER_REPOSITORY_FRONTEND || 'frontend' }}
+      BACKEND_VALUES_DIR: helm/python/services/task-decomposition-backend
+      FRONTEND_VALUES_DIR: helm/javascript/services/task-decomposition-frontend
     steps:
       - name: Update image references in Argo repo
         env:
@@ -284,11 +284,11 @@ jobs:
           export GIT_TERMINAL_PROMPT=0
 
           if [ "${GITHUB_REF_NAME}" = "master" ]; then
-            BACKEND_VALUES_PATH="helm/python/services/${BACKEND_SERVICE}/values-prod.yaml"
-            FRONTEND_VALUES_PATH="helm/python/services/${FRONTEND_SERVICE}/values-prod.yaml"
+            BACKEND_VALUES_PATH="${BACKEND_VALUES_DIR}/values-prod.yaml"
+            FRONTEND_VALUES_PATH="${FRONTEND_VALUES_DIR}/values-prod.yaml"
           else
-            BACKEND_VALUES_PATH="helm/python/services/${BACKEND_SERVICE}/values-dev.yaml"
-            FRONTEND_VALUES_PATH="helm/python/services/${FRONTEND_SERVICE}/values-dev.yaml"
+            BACKEND_VALUES_PATH="${BACKEND_VALUES_DIR}/values-dev.yaml"
+            FRONTEND_VALUES_PATH="${FRONTEND_VALUES_DIR}/values-dev.yaml"
           fi
 
           update_image_values() {
