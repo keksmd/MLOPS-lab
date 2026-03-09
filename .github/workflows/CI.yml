@@ -53,6 +53,13 @@ jobs:
         working-directory: backend
         run: uv sync --frozen --group dev
 
+      - name: Run migrations and seed data
+        working-directory: backend
+        run: |
+          uv run python app/backend_pre_start.py
+          uv run alembic upgrade head
+          uv run python app/initial_data.py
+
       - name: Run backend tests
         working-directory: backend
         run: uv run pytest tests --junitxml test-results.xml
