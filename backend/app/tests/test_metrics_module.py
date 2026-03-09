@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any, TypeVar
 
 import pytest
+from langchain_core.messages import AIMessage
+from pydantic import BaseModel
 
 from app.metrics import MetricsConfig, MetricsEvaluator
 from app.metrics.aggregation import (
@@ -12,7 +15,7 @@ from app.metrics.aggregation import (
     compute_tool_score,
     compute_validity_score,
 )
-from app.metrics.config import JudgeConfig
+from app.metrics.config import JudgeConfig, OpenRouterConfig
 from app.metrics.exceptions import JudgeResponseParseError, LLMClientError
 from app.metrics.heuristics import (
     compute_arg_name_valid_rate,
@@ -25,13 +28,43 @@ from app.metrics.heuristics import (
     compute_tool_set_f1,
     compute_web_search_query_nonempty_rate,
 )
+from app.metrics.llm.base import BaseLLMClient
 from app.metrics.llm.openrouter_client import OpenRouterLLMClient
 from app.metrics.parsers import parse_judge_response
 from app.metrics.prompts import JudgePromptBuilder
 from app.metrics.schemas import EvaluationSample
 
+SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
-def test_parse_judge_response_and_aggregation(tool_specs, predicted_output, gold_output, judge_payload):
+
+class DummyJSONLLMClient(BaseLLMClient):
+    """Deterministic schema-aware test client."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
+        return json.dumps(self.payload)
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        return self.payload
+
+    def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[SchemaT],
+    ) -> SchemaT:
+        return schema.model_validate(self.payload)
+
+
+def test_parse_judge_response_and_aggregation(
+    tool_specs,
+    predicted_output,
+    gold_output,
+    judge_payload,
+) -> None:
     sample = EvaluationSample(
         sample_id="sample-1",
         task="Find the article received date.",
@@ -41,7 +74,7 @@ def test_parse_judge_response_and_aggregation(tool_specs, predicted_output, gold
         raw_prediction=json.dumps(predicted_output.model_dump()),
     )
 
-    heuristics = compute_heuristic_metrics(sample, similarity_fn=lambda a, b: 0.7)
+    heuristics = compute_heuristic_metrics(sample, similarity_fn=lambda _a, _b: 0.7)
     judge = parse_judge_response(judge_payload)
     aggregate = compute_aggregate_metrics(heuristics, judge, MetricsConfig().weights)
 
@@ -64,13 +97,20 @@ def test_parse_judge_response_and_aggregation(tool_specs, predicted_output, gold
     assert f1 == pytest.approx(0.8)
 
     assert compute_validity_score(heuristics) <= 1.0
-    assert compute_plan_score(judge) == pytest.approx((0.9 + 0.8 + 0.85 + 0.75 + 0.5 + 0.75) / 6)
+    assert compute_plan_score(judge) == pytest.approx(
+        (0.9 + 0.8 + 0.85 + 0.75 + 0.5 + 0.75) / 6
+    )
     assert compute_tool_score(judge) == pytest.approx((0.9 + 0.8 + 0.9) / 3)
     assert compute_solvability_score(judge) == pytest.approx(0.8)
     assert 0.0 <= aggregate.final_score <= 1.0
 
 
-def test_judge_prompt_and_evaluator_dataset(tool_specs, predicted_output, gold_output, judge_payload):
+def test_judge_prompt_and_evaluator_dataset(
+    tool_specs,
+    predicted_output,
+    gold_output,
+    judge_payload,
+) -> None:
     sample = EvaluationSample(
         sample_id="sample-2",
         task="Find the article received date.",
@@ -80,7 +120,13 @@ def test_judge_prompt_and_evaluator_dataset(tool_specs, predicted_output, gold_o
         raw_prediction=json.dumps(predicted_output.model_dump()),
     )
 
-    prompt_builder = JudgePromptBuilder(JudgeConfig(use_reference_aware_judge=True, include_reasoning=False))
+    prompt_builder = JudgePromptBuilder(
+        JudgeConfig(
+            use_reference_aware_judge=True,
+            include_reasoning=False,
+        )
+    )
+
     system_prompt = prompt_builder.build_system_prompt()
     user_prompt = prompt_builder.build_user_prompt(sample)
 
@@ -88,69 +134,77 @@ def test_judge_prompt_and_evaluator_dataset(tool_specs, predicted_output, gold_o
     assert "golden_reference" in user_prompt
     assert '"reasoning"' not in user_prompt
 
-    class DummyJSONLLMClient:
-        def __init__(self, payload):
-            self.payload = payload
-
-        def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
-            return json.dumps(self.payload)
-
-        def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
-            return self.payload
-
     evaluator = MetricsEvaluator(
         config=MetricsConfig(enable_judge_metrics=True),
         llm_client=DummyJSONLLMClient(judge_payload),
         prompt_builder=prompt_builder,
     )
+
     sample_result = evaluator.evaluate_sample(sample)
-    dataset_result = evaluator.evaluate_dataset([sample, sample], include_per_sample=True)
+    dataset_result = evaluator.evaluate_dataset(
+        [sample, sample],
+        include_per_sample=True,
+    )
 
     assert sample_result["aggregate"]["final_score"] <= 1.0
     assert dataset_result["sample_count"] == 2
-    assert dataset_result["metrics"]["plan_relevance"] == pytest.approx(judge_payload["plan_relevance"])
+    assert dataset_result["metrics"]["plan_relevance"] == pytest.approx(
+        judge_payload["plan_relevance"]
+    )
     assert len(dataset_result["per_sample"]) == 2
 
 
-def test_parse_judge_response_invalid_payload_raises():
+def test_parse_judge_response_invalid_payload_raises() -> None:
     with pytest.raises(JudgeResponseParseError):
         parse_judge_response({"plan_relevance": 0.5})
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict | None = None, text: str | None = None):
-        self.status_code = status_code
-        self._payload = payload or {}
-        self.text = text or ""
-        self.headers = {}
+class _FakeStructuredModel:
+    def __init__(self, response: object) -> None:
+        self._response = response
 
-    def json(self):
-        return self._payload
-
-    def raise_for_status(self):
-        raise RuntimeError(f"HTTP {self.status_code}")
+    def invoke(self, messages: list[object]) -> object:
+        return self._response
 
 
-def test_openrouter_client_generate_text_and_json(monkeypatch):
-    calls = {"count": 0}
+class _FakeChatOpenRouter:
+    def __init__(self, **_: object) -> None:
+        pass
 
-    def fake_post(*args, **kwargs):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            return _FakeResponse(429)
-        return _FakeResponse(
-            200,
-            payload={
-                "choices": [
-                    {"message": {"content": '```json\n{"ok": true, "value": 1}\n```'}}
-                ]
-            },
-        )
+    def invoke(self, messages: list[object]) -> AIMessage:
+        return AIMessage(content='{"ok": true, "value": 1}')
 
-    monkeypatch.setattr("requests.post", fake_post)
+    def with_structured_output(
+        self,
+        schema: type[BaseModel],
+        **_: object,
+    ) -> _FakeStructuredModel:
+        return _FakeStructuredModel({"ok": True, "value": 1})
+
+
+class _FakeBrokenChatOpenRouter:
+    def __init__(self, **_: object) -> None:
+        pass
+
+    def invoke(self, messages: list[object]) -> AIMessage:
+        return AIMessage(content="not json")
+
+    def with_structured_output(
+        self,
+        schema: type[BaseModel],
+        **_: object,
+    ) -> _FakeStructuredModel:
+        return _FakeStructuredModel("not a valid object")
+
+
+def test_openrouter_client_generate_text_and_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.metrics.llm.openrouter_client.ChatOpenRouter",
+        _FakeChatOpenRouter,
+    )
 
     client = OpenRouterLLMClient(
-        config=__import__("app.metrics.config", fromlist=["OpenRouterConfig"]).OpenRouterConfig(
+        config=OpenRouterConfig(
             api_key="test-key",
             model_name="test-model",
             max_retries=2,
@@ -165,17 +219,16 @@ def test_openrouter_client_generate_text_and_json(monkeypatch):
     assert obj == {"ok": True, "value": 1}
 
 
-def test_openrouter_client_invalid_json_raises(monkeypatch):
-    def fake_post(*args, **kwargs):
-        return _FakeResponse(
-            200,
-            payload={"choices": [{"message": {"content": "not json"}}]},
-        )
-
-    monkeypatch.setattr("requests.post", fake_post)
+def test_openrouter_client_invalid_json_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.metrics.llm.openrouter_client.ChatOpenRouter",
+        _FakeBrokenChatOpenRouter,
+    )
 
     client = OpenRouterLLMClient(
-        config=__import__("app.metrics.config", fromlist=["OpenRouterConfig"]).OpenRouterConfig(
+        config=OpenRouterConfig(
             api_key="test-key",
             model_name="test-model",
             max_retries=1,

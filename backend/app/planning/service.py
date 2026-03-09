@@ -12,7 +12,7 @@ from .schemas import InferenceRequest, InferenceResult, PlannerExample
 
 
 class PlanningService:
-    """Main facade for planning inference compatible with the metrics module."""
+    """Main facade for planner inference."""
 
     def __init__(
         self,
@@ -28,26 +28,30 @@ class PlanningService:
         self.output_parser = output_parser or PlannerOutputParser()
 
     def predict(self, request: InferenceRequest) -> InferenceResult:
-        """
-        Generate a planner prediction for a single task.
-
-        Returns a structured PlannerOutput that can be passed directly into
-        `app.metrics.schemas.EvaluationSample`.
-        """
+        """Generate a planner prediction for a single task."""
         prompt_artifacts = self.prompt_builder.build(request)
-        started = perf_counter()
-        raw_response = self.llm_client.generate_text(
+
+        started_at = perf_counter()
+        structured_prediction = self.llm_client.generate_structured(
             system_prompt=prompt_artifacts.system_prompt,
             user_prompt=prompt_artifacts.user_prompt,
+            schema=PlannerOutput,
         )
-        latency_seconds = perf_counter() - started
-        prediction = self.output_parser.parse(raw_response)
+        latency_seconds = perf_counter() - started_at
+
+        prediction = self.output_parser.parse(structured_prediction)
+
+        raw_response: str | None = None
+        if self.config.include_raw_response:
+            raw_response = prediction.model_dump_json(indent=2)
 
         return InferenceResult(
             prediction=prediction,
             model_name=request.model_name or self.config.default_model_name,
-            raw_response=raw_response if self.config.include_raw_response else None,
-            prompt_artifacts=prompt_artifacts if self.config.include_prompt_debug else None,
+            raw_response=raw_response,
+            prompt_artifacts=(
+                prompt_artifacts if self.config.include_prompt_debug else None
+            ),
             metadata={
                 "latency_seconds": latency_seconds,
                 "few_shot_count": len(request.few_shot_examples),
@@ -62,7 +66,7 @@ class PlanningService:
         few_shot_examples: list[PlannerExample] | None = None,
         model_name: str | None = None,
     ) -> InferenceResult:
-        """Convenience wrapper around `predict` for direct functional use."""
+        """Convenience wrapper around predict()."""
         request = InferenceRequest(
             task=task,
             available_tools=available_tools,

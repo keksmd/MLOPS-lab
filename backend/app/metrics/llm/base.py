@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
+
+SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
 class BaseLLMClient(ABC):
-    """Abstract interface implemented by all LLM backends used in evaluation."""
+    """Abstract interface for LLM backends used by planning and evaluation."""
 
     @abstractmethod
     def generate_text(
@@ -14,17 +18,7 @@ class BaseLLMClient(ABC):
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        """
-        Generate raw text from the underlying model.
-
-        Args:
-            system_prompt: System-level instruction.
-            user_prompt: User prompt content.
-
-        Returns:
-            Raw model text output.
-        """
-        raise NotImplementedError
+        """Generate raw text from the underlying model."""
 
     @abstractmethod
     def generate_json(
@@ -33,14 +27,14 @@ class BaseLLMClient(ABC):
         system_prompt: str,
         user_prompt: str,
     ) -> dict[str, Any]:
-        """
-        Generate a JSON object from the underlying model.
+        """Generate an arbitrary JSON object from the underlying model."""
 
-        Args:
-            system_prompt: System-level instruction.
-            user_prompt: User prompt content.
-
-        Returns:
-            Parsed JSON object.
-        """
-        raise NotImplementedError
+    @abstractmethod
+    def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[SchemaT],
+    ) -> SchemaT:
+        """Generate a schema-validated response from the underlying model."""

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
+from pydantic import BaseModel
 
 from app.metrics.llm.base import BaseLLMClient
 from app.metrics.schemas import ActionCall, PlannerOutput, ToolArgumentSpec, ToolSpec
 from app.planning.schemas import PlannerExample
+
+SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
 @pytest.fixture
@@ -18,21 +21,43 @@ def tool_specs() -> list[ToolSpec]:
             tool_name="web_search",
             description="Search the web for relevant information using a textual query.",
             arguments=[
-                ToolArgumentSpec(name="query", description="search query string", required=True),
-                ToolArgumentSpec(name="filter_year", description="optional year filter", required=False),
+                ToolArgumentSpec(
+                    name="query",
+                    description="search query string",
+                    required=True,
+                ),
+                ToolArgumentSpec(
+                    name="filter_year",
+                    description="optional year filter",
+                    required=False,
+                ),
             ],
         ),
         ToolSpec(
             tool_name="crawl_pages",
             description="Open a web page by URL and read its content.",
-            arguments=[ToolArgumentSpec(name="url", description="URL placeholder", required=True)],
+            arguments=[
+                ToolArgumentSpec(
+                    name="url",
+                    description="URL placeholder",
+                    required=True,
+                )
+            ],
         ),
         ToolSpec(
             tool_name="find_archived_url",
             description="Find an archived version of a page.",
             arguments=[
-                ToolArgumentSpec(name="url", description="target URL", required=True),
-                ToolArgumentSpec(name="date", description="YYYYMMDD", required=True),
+                ToolArgumentSpec(
+                    name="url",
+                    description="target URL",
+                    required=True,
+                ),
+                ToolArgumentSpec(
+                    name="date",
+                    description="YYYYMMDD",
+                    required=True,
+                ),
             ],
         ),
     ]
@@ -47,9 +72,18 @@ def gold_output() -> PlannerOutput:
             "If needed, inspect archived material to confirm the date.",
         ],
         actions=[
-            ActionCall(tool_name="web_search", arguments={"query": "article received date"}),
-            ActionCall(tool_name="crawl_pages", arguments={"url": "<retrieved_url>"}),
-            ActionCall(tool_name="find_archived_url", arguments={"url": "<target_url>", "date": "20240101"}),
+            ActionCall(
+                tool_name="web_search",
+                arguments={"query": "article received date"},
+            ),
+            ActionCall(
+                tool_name="crawl_pages",
+                arguments={"url": ""},
+            ),
+            ActionCall(
+                tool_name="find_archived_url",
+                arguments={"url": "", "date": "20240101"},
+            ),
         ],
     )
 
@@ -63,9 +97,18 @@ def predicted_output() -> PlannerOutput:
             "Open the article page and inspect the metadata.",
         ],
         actions=[
-            ActionCall(tool_name="web_search", arguments={"query": "article received date"}),
-            ActionCall(tool_name="crawl_pages", arguments={"url": "<retrieved_url>"}),
-            ActionCall(tool_name="crawl_pages", arguments={"url": "<retrieved_url>"}),
+            ActionCall(
+                tool_name="web_search",
+                arguments={"query": "article received date"},
+            ),
+            ActionCall(
+                tool_name="crawl_pages",
+                arguments={"url": ""},
+            ),
+            ActionCall(
+                tool_name="crawl_pages",
+                arguments={"url": ""},
+            ),
         ],
     )
 
@@ -91,6 +134,15 @@ class DummyJSONLLMClient(BaseLLMClient):
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         return self.payload
+
+    def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[SchemaT],
+    ) -> SchemaT:
+        return schema.model_validate(self.payload)
 
 
 @pytest.fixture
@@ -124,12 +176,16 @@ def tmp_json_artifacts(tmp_path: Path, gold_output: PlannerOutput) -> dict[str, 
                 {
                     "task": "What is the received date?",
                     "plan": gold_output.plan,
-                    "actions": [action.model_dump() for action in gold_output.actions],
+                    "actions": [
+                        action.model_dump() for action in gold_output.actions
+                    ],
                 },
                 {
                     "task": "Who is the author?",
                     "plan": gold_output.plan,
-                    "actions": [action.model_dump() for action in gold_output.actions],
+                    "actions": [
+                        action.model_dump() for action in gold_output.actions
+                    ],
                 },
             ],
             ensure_ascii=False,
@@ -142,7 +198,10 @@ def tmp_json_artifacts(tmp_path: Path, gold_output: PlannerOutput) -> dict[str, 
         json.dumps(
             {
                 "web_search": {
-                    "description": "Search the web for relevant information using a textual query.",
+                    "description": (
+                        "Search the web for relevant information "
+                        "using a textual query."
+                    ),
                     "arguments": {
                         "query": "search query string",
                         "filter_year": "optional year filter",
@@ -159,4 +218,7 @@ def tmp_json_artifacts(tmp_path: Path, gold_output: PlannerOutput) -> dict[str, 
         encoding="utf-8",
     )
 
-    return {"dataset": dataset_path, "tools": tools_path}
+    return {
+        "dataset": dataset_path,
+        "tools": tools_path,
+    }
