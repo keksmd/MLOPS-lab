@@ -191,7 +191,7 @@ jobs:
             type=raw,value=${{ steps.image_tag.outputs.value }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           image: tonistiigi/binfmt:qemu-v7.0.0-28
 
