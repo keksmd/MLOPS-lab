@@ -2,14 +2,14 @@
 
 ## Tasks
 - [x] Reconcile CI.yml with current repository branch model
-- [x] Adapt build pipeline for two applications (backend/frontend) without root Dockerfile
-- [x] Adapt Argo update for backend and frontend values files
+- [x] Rebuild CI around the actual monorepo layout (backend uv package + frontend bun workspace)
+- [x] Adapt image publish for backend/frontend Dockerfiles with explicit `/dada/` registry namespace
+- [x] Adapt Argo update for backend and frontend repository/tag values
 - [x] Validate workflow syntax
 
 ## Review
-- `build_publish` now builds/pushes two images: `backend/Dockerfile` and `frontend/Dockerfile`.
-- Image repositories are split with vars:
-  - `NEXUS_DOCKER_REPOSITORY_BACKEND`
-  - `NEXUS_DOCKER_REPOSITORY_FRONTEND`
-- Argo update now updates both values files (backend + frontend) with the same image tag.
+- `backend_test` now runs from `backend/` with `uv` and a Postgres service, matching how the backend package and `.env` are structured.
+- `frontend_build` now installs Bun dependencies, generates `frontend/openapi.json` from the backend app, regenerates the client, and builds the frontend.
+- `build_publish` now publishes two images from `backend/Dockerfile` and `frontend/Dockerfile` to `nexus.dada-tuda.ru/dada/...`.
+- `update_argo_repo` now updates both `repository` and `tag` fields for backend and frontend values files.
 - YAML parse validation passed (`YAML_OK`).
