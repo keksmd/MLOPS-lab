@@ -1,0 +1,10 @@
+Evaluate the predicted output.
+
+Consider whether the plan is relevant, complete, logically ordered, specific, and non-redundant.
+Also assess whether the chosen tools and arguments are appropriate and sufficient, and whether the output would allow the task to be solved in practice.
+Set critical_failure=true only when the prediction has a major flaw that makes successful execution unlikely.
+Only include an item in critical_missing_steps if that capability or operation is truly absent from the predicted plan.
+If the plan includes an equivalent step in a shorter or less detailed form, reflect that through lower specificity or completeness scores instead of marking it as missing.
+
+Payload:
+{{ payload_json }}

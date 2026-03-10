@@ -19,6 +19,9 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.0.0,<3.0.0",
     "pyjwt<3.0.0,>=2.8.0",
     "pwdlib[argon2,bcrypt]>=0.3.0",
+    "pandas>=2.2.0,<3.0.0",
+    "langchain-core>=1.2.13,<2.0.0",
+    "langchain-openrouter<1.0.0,>=0.1.0",
 ]
 
 [dependency-groups]

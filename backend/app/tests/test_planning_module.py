@@ -40,6 +40,8 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
 class DummyTextLLMClient(BaseLLMClient):
+    """Deterministic test client for planner service tests."""
+
     def __init__(self, response_text: str) -> None:
         self.response_text = response_text
 
@@ -71,7 +73,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     assert normalize_action_arguments(
         "crawl_pages",
         {"url": "https://example.com", "file_path": "/tmp/x"},
-    ) == {"url": ""}
+    ) == {"url": "<retrieved_url>"}
 
     actions = simplify_actions(
         [
@@ -83,7 +85,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     )
 
     assert len(actions) == 2
-    assert actions[1].arguments["url"] == ""
+    assert actions[1].arguments["url"] == "<retrieved_url>"
 
     output = normalize_planner_output(
         {
@@ -122,7 +124,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     converted = convert_taskcraft_row(raw_row)
     assert converted["task"] == "What is the received date?"
     assert converted["plan"] == ["Search", "Open the page"]
-    assert converted["actions"][1]["arguments"]["url"] == ""
+    assert converted["actions"][1]["arguments"]["url"] == "<retrieved_url>"
 
     raw_df = pd.DataFrame([raw_row])
     processed_df = build_processed_dataset(raw_df)
@@ -150,7 +152,10 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     assert examples[0].output.plan
 
 
-def test_prompt_parser_service_and_route(tool_specs, planner_examples) -> None:
+def test_prompt_builder_uses_external_templates_and_parser(
+    tool_specs,
+    planner_examples,
+) -> None:
     prompt_builder = PlanningPromptBuilder()
     request = InferenceRequest(
         task="Find the received date.",
@@ -159,8 +164,11 @@ def test_prompt_parser_service_and_route(tool_specs, planner_examples) -> None:
     )
 
     artifacts = prompt_builder.build(request)
+
+    assert prompt_builder.get_format_instructions() in artifacts.system_prompt
     assert "Available tools:" in artifacts.system_prompt
     assert "Example 1" in artifacts.user_prompt
+    assert "Task:\nFind the received date." in artifacts.user_prompt
 
     with pytest.raises(PromptBuildError):
         prompt_builder.build(
@@ -170,6 +178,8 @@ def test_prompt_parser_service_and_route(tool_specs, planner_examples) -> None:
             )
         )
 
+
+def test_parser_service_and_route(tool_specs, planner_examples) -> None:
     parser = PlannerOutputParser()
     parsed = parser.parse(
         '```json\n{"plan": ["Search", "Open"], "actions": [{"tool_name": "web_search", "arguments": {"query": "x"}}]}\n```'
@@ -198,6 +208,7 @@ def test_prompt_parser_service_and_route(tool_specs, planner_examples) -> None:
         )
     )
 
+    prompt_builder = PlanningPromptBuilder()
     service = PlanningService(
         llm_client=llm_client,
         config=PlanningConfig(
@@ -208,8 +219,14 @@ def test_prompt_parser_service_and_route(tool_specs, planner_examples) -> None:
         output_parser=parser,
     )
 
+    request = InferenceRequest(
+        task="Find the received date.",
+        available_tools=tool_specs,
+        few_shot_examples=planner_examples[:2],
+    )
+
     result = service.predict(request)
-    assert result.prediction.actions[1].arguments["url"] == ""
+    assert result.prediction.actions[1].arguments["url"] == "<retrieved_url>"
     assert result.raw_response is not None
     assert result.prompt_artifacts is not None
     assert result.metadata["few_shot_count"] == 2

@@ -78,11 +78,11 @@ def gold_output() -> PlannerOutput:
             ),
             ActionCall(
                 tool_name="crawl_pages",
-                arguments={"url": ""},
+                arguments={"url": "<retrieved_url>"},
             ),
             ActionCall(
                 tool_name="find_archived_url",
-                arguments={"url": "", "date": "20240101"},
+                arguments={"url": "<retrieved_url>", "date": "20240101"},
             ),
         ],
     )
@@ -103,11 +103,11 @@ def predicted_output() -> PlannerOutput:
             ),
             ActionCall(
                 tool_name="crawl_pages",
-                arguments={"url": ""},
+                arguments={"url": "<retrieved_url>"},
             ),
             ActionCall(
                 tool_name="crawl_pages",
-                arguments={"url": ""},
+                arguments={"url": "<retrieved_url>"},
             ),
         ],
     )
@@ -160,6 +160,7 @@ def judge_payload() -> dict[str, Any]:
         "overall_solvability": 0.8,
         "critical_failure": False,
         "critical_missing_steps": [],
+        "underspecified_steps": [],
         "unnecessary_actions": [],
         "bad_arguments": [],
         "duplicate_step_notes": ["Two steps are very similar."],
@@ -168,7 +169,10 @@ def judge_payload() -> dict[str, Any]:
 
 
 @pytest.fixture
-def tmp_json_artifacts(tmp_path: Path, gold_output: PlannerOutput) -> dict[str, Path]:
+def tmp_json_artifacts(
+    tmp_path: Path,
+    gold_output: PlannerOutput,
+) -> dict[str, Path]:
     dataset_path = tmp_path / "dataset_df.json"
     dataset_path.write_text(
         json.dumps(

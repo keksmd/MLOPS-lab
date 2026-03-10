@@ -1,57 +1,52 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from langchain_core.messages import BaseMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    PromptTemplate,
+    SystemMessagePromptTemplate,
+)
 
 from .config import JudgeConfig
-from .schemas import EvaluationSample
+from .schemas import EvaluationSample, JudgeMetricScores
+
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+
+
+def _load_template(file_name: str) -> str:
+    """Load a prompt template from the local templates directory."""
+    template_path = _TEMPLATE_DIR / file_name
+    return template_path.read_text(encoding="utf-8")
 
 
 class JudgePromptBuilder:
-    """Build judge prompts using LangChain prompt templates."""
-
-    _SYSTEM_TEMPLATE = """\
-You are a strict evaluator of task decomposition for tool-using AI agents.
-
-Evaluate only the quality of the predicted plan and actions.
-All numeric scores must be normalized to the [0, 1] range, where 0 means very poor and 1 means excellent.
-Return only valid JSON.
-When a golden reference is provided, treat it as the ideal answer that would receive the maximum possible rating on every criterion.
-Treat the golden reference as an ideal ceiling, not as a required wording or exact sequence of steps.
-Do not require lexical similarity to the golden reference.
-A prediction may be correct even if phrased differently.
-Do not mark a step as missing if the predicted plan already contains a semantically equivalent step.
-Use critical_missing_steps only for truly absent capabilities or operations.
-If a step exists but is less specific or less detailed than the golden reference, lower plan_specificity or plan_completeness instead of listing it in critical_missing_steps.
-If a step is present but under-specified, list it in underspecified_steps instead of critical_missing_steps.
-Do not penalize argument_quality heavily when a predicted search query is shorter than the golden reference but still likely sufficient to retrieve the correct source.
-Prefer moderate penalties over harsh penalties for valid alternative search formulations.
-Do not output markdown or explanations outside JSON.
-"""
-
-    _USER_TEMPLATE = """\
-Evaluate the predicted output.
-
-Consider whether the plan is relevant, complete, logically ordered, specific, and non-redundant.
-Also assess whether the chosen tools and arguments are appropriate and sufficient, and whether the output would allow the task to be solved in practice.
-Use normalized scores in [0, 1].
-Set critical_failure=true only when the prediction has a major flaw that makes successful execution unlikely.
-Only include an item in critical_missing_steps if that capability or operation is truly absent from the predicted plan.
-If the plan includes an equivalent step but in a shorter or less detailed form, reflect that through lower specificity or completeness scores instead of marking it as missing.
-
-Payload:
-{payload}
-"""
+    """Build judge prompts using external Jinja templates and LangChain parsers."""
 
     def __init__(self, config: JudgeConfig | None = None) -> None:
         self.config = config or JudgeConfig()
+        self._output_parser = PydanticOutputParser(
+            pydantic_object=JudgeMetricScores
+        )
+
+        system_prompt = PromptTemplate.from_template(
+            _load_template("judge_system_prompt.j2"),
+            template_format="jinja2",
+        )
+        user_prompt = PromptTemplate.from_template(
+            _load_template("judge_user_prompt.j2"),
+            template_format="jinja2",
+        )
+
         self._system_prompt_template = ChatPromptTemplate.from_messages(
-            [("system", self._SYSTEM_TEMPLATE)]
+            [SystemMessagePromptTemplate(prompt=system_prompt)]
         )
         self._user_prompt_template = ChatPromptTemplate.from_messages(
-            [("human", self._USER_TEMPLATE)]
+            [HumanMessagePromptTemplate(prompt=user_prompt)]
         )
 
     @staticmethod
@@ -61,56 +56,56 @@ Payload:
             return message.content
         return str(message.content)
 
+    def get_format_instructions(self) -> str:
+        """Return LangChain-generated format instructions for judge output."""
+        return self._output_parser.get_format_instructions()
+
     def _build_payload(self, sample: EvaluationSample) -> dict[str, object]:
         """Build the structured judge payload for a single sample."""
-        tool_payload = [tool.model_dump() for tool in sample.available_tools]
-
-        required_output_schema: dict[str, object] = {
-            "plan_relevance": 0.0,
-            "plan_completeness": 0.0,
-            "plan_logic": 0.0,
-            "plan_specificity": 0.0,
-            "plan_nonredundancy": 0.0,
-            "plan_duplicate_penalty": 0.0,
-            "tool_appropriateness": 0.0,
-            "tool_sufficiency": 0.0,
-            "argument_quality": 0.0,
-            "overall_solvability": 0.0,
-            "critical_failure": False,
-            "critical_missing_steps": [],
-            "underspecified_steps": [],
-            "unnecessary_actions": [],
-            "bad_arguments": [],
-            "duplicate_step_notes": [],
-            "reasoning": "",
+        payload: dict[str, object] = {
+            "task": sample.task,
+            "available_tools": [
+                tool.model_dump() for tool in sample.available_tools
+            ],
+            "predicted_output": sample.prediction.model_dump(),
         }
 
-        if not self.config.include_reasoning:
-            required_output_schema.pop("reasoning", None)
+        if self.config.use_reference_aware_judge and sample.golden is not None:
+            payload["golden_reference"] = sample.golden.model_dump()
+
+        return payload
+
+    def _build_system_context(self) -> dict[str, object]:
+        """Build template variables for the system prompt."""
+        reasoning_instruction = (
+            "Provide a short reasoning string that mentions the most important "
+            "strengths and weaknesses of the prediction."
+            if self.config.include_reasoning
+            else "Set reasoning to an empty string."
+        )
 
         return {
-            "task": sample.task,
-            "available_tools": tool_payload,
-            "predicted_output": sample.prediction.model_dump(),
-            "golden_reference": (
-                sample.golden.model_dump()
-                if self.config.use_reference_aware_judge and sample.golden is not None
-                else None
-            ),
-            "required_output_schema": required_output_schema,
+            "use_reference_aware_judge": self.config.use_reference_aware_judge,
+            "reasoning_instruction": reasoning_instruction,
+            "format_instructions": self.get_format_instructions(),
         }
 
     def build_system_prompt(self) -> str:
         """Render the system prompt."""
-        prompt_value = self._system_prompt_template.invoke({})
+        prompt_value = self._system_prompt_template.invoke(
+            self._build_system_context()
+        )
         return self._message_text(prompt_value.messages[0])
 
     def build_user_prompt(self, sample: EvaluationSample) -> str:
         """Render the user prompt for one evaluation sample."""
-        payload = self._build_payload(sample)
         prompt_value = self._user_prompt_template.invoke(
             {
-                "payload": json.dumps(payload, ensure_ascii=False, indent=2),
+                "payload_json": json.dumps(
+                    self._build_payload(sample),
+                    ensure_ascii=False,
+                    indent=2,
+                )
             }
         )
         return self._message_text(prompt_value.messages[0])
