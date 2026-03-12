@@ -36,6 +36,8 @@ from app.planning.parsers import PlannerOutputParser
 from app.planning.prompting import PlanningPromptBuilder
 from app.planning.schemas import InferenceRequest
 
+RETRIEVED_URL_PLACEHOLDER = "<retrieved_url>"
+
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
@@ -73,7 +75,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     assert normalize_action_arguments(
         "crawl_pages",
         {"url": "https://example.com", "file_path": "/tmp/x"},
-    ) == {"url": ""}
+    ) == {"url": RETRIEVED_URL_PLACEHOLDER}
 
     actions = simplify_actions(
         [
@@ -85,7 +87,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     )
 
     assert len(actions) == 2
-    assert actions[1].arguments["url"] == ""
+    assert actions[1].arguments["url"] == RETRIEVED_URL_PLACEHOLDER
 
     output = normalize_planner_output(
         {
@@ -124,7 +126,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     converted = convert_taskcraft_row(raw_row)
     assert converted["task"] == "What is the received date?"
     assert converted["plan"] == ["Search", "Open the page"]
-    assert converted["actions"][1]["arguments"]["url"] == ""
+    assert converted["actions"][1]["arguments"]["url"] == RETRIEVED_URL_PLACEHOLDER
 
     raw_df = pd.DataFrame([raw_row])
     processed_df = build_processed_dataset(raw_df)
@@ -226,7 +228,7 @@ def test_parser_service_and_route(tool_specs, planner_examples) -> None:
     )
 
     result = service.predict(request)
-    assert result.prediction.actions[1].arguments["url"] == ""
+    assert result.prediction.actions[1].arguments["url"] == RETRIEVED_URL_PLACEHOLDER
     assert result.raw_response is not None
     assert result.prompt_artifacts is not None
     assert result.metadata["few_shot_count"] == 2
