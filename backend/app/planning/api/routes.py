@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.config import settings
 from app.metrics.config import OpenRouterConfig
 from app.metrics.llm.openrouter_client import OpenRouterLLMClient
 
@@ -15,27 +14,23 @@ router = APIRouter(prefix="/planning", tags=["planning"])
 
 
 def get_planning_service() -> PlanningService:
-    """
-    Build a planning service instance from environment variables.
-
-    Required environment variables:
-    - OPENROUTER_API_KEY
-
-    Optional environment variables:
-    - OPENROUTER_MODEL_NAME
-    """
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    """Build a planning service instance from centralized application settings."""
+    api_key = settings.OPENROUTER_API_KEY
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY is not configured")
+        raise HTTPException(
+            status_code=500,
+            detail="OPENROUTER_API_KEY is not configured",
+        )
 
-    model_name = os.getenv("OPENROUTER_MODEL_NAME", "meta-llama/llama-3.2-3b-instruct:free")
+    model_name = settings.OPENROUTER_MODEL_NAME
     llm_client = OpenRouterLLMClient(
         OpenRouterConfig(
             api_key=api_key,
             model_name=model_name,
         )
     )
-    return PlanningService(llm_client=llm_client, config=PlanningConfig())
+    planning_config = PlanningConfig(default_model_name=model_name)
+    return PlanningService(llm_client=llm_client, config=planning_config)
 
 
 @router.post("/predict", response_model=InferenceResult)

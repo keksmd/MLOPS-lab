@@ -5,7 +5,7 @@ from typing import TypeVar
 
 import pandas as pd
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -73,7 +73,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     assert normalize_action_arguments(
         "crawl_pages",
         {"url": "https://example.com", "file_path": "/tmp/x"},
-    ) == {"url": "<retrieved_url>"}
+    ) == {"url": ""}
 
     actions = simplify_actions(
         [
@@ -85,7 +85,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     )
 
     assert len(actions) == 2
-    assert actions[1].arguments["url"] == "<retrieved_url>"
+    assert actions[1].arguments["url"] == ""
 
     output = normalize_planner_output(
         {
@@ -124,7 +124,7 @@ def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     converted = convert_taskcraft_row(raw_row)
     assert converted["task"] == "What is the received date?"
     assert converted["plan"] == ["Search", "Open the page"]
-    assert converted["actions"][1]["arguments"]["url"] == "<retrieved_url>"
+    assert converted["actions"][1]["arguments"]["url"] == ""
 
     raw_df = pd.DataFrame([raw_row])
     processed_df = build_processed_dataset(raw_df)
@@ -226,7 +226,7 @@ def test_parser_service_and_route(tool_specs, planner_examples) -> None:
     )
 
     result = service.predict(request)
-    assert result.prediction.actions[1].arguments["url"] == "<retrieved_url>"
+    assert result.prediction.actions[1].arguments["url"] == ""
     assert result.raw_response is not None
     assert result.prompt_artifacts is not None
     assert result.metadata["few_shot_count"] == 2
@@ -266,3 +266,64 @@ def test_parser_service_and_route(tool_specs, planner_examples) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["prediction"]["actions"][0]["tool_name"] == "web_search"
+
+
+class _FakeRouteLLMClient(BaseLLMClient):
+    """Minimal fake OpenRouter client used to validate route wiring."""
+
+    def __init__(self, config: object) -> None:
+        self.config = config
+
+    def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
+        raise NotImplementedError
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
+        raise NotImplementedError
+
+    def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[SchemaT],
+    ) -> SchemaT:
+        raise NotImplementedError
+
+
+def test_get_planning_service_uses_central_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.planning.api.routes.settings.OPENROUTER_API_KEY",
+        "test-key",
+    )
+    monkeypatch.setattr(
+        "app.planning.api.routes.settings.OPENROUTER_MODEL_NAME",
+        "test-model",
+    )
+    monkeypatch.setattr(
+        "app.planning.api.routes.OpenRouterLLMClient",
+        _FakeRouteLLMClient,
+    )
+
+    service = get_planning_service()
+
+    assert service.config.default_model_name == "test-model"
+    assert isinstance(service.llm_client, _FakeRouteLLMClient)
+    assert service.llm_client.config.api_key == "test-key"
+    assert service.llm_client.config.model_name == "test-model"
+
+
+def test_get_planning_service_without_api_key_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.planning.api.routes.settings.OPENROUTER_API_KEY",
+        None,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_planning_service()
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "OPENROUTER_API_KEY is not configured"
