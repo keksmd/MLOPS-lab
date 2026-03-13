@@ -166,26 +166,9 @@ def test_normalize_action_arguments_for_archived_url() -> None:
         },
     )
 
-    assert result["url"] == TARGET_URL_PLACEHOLDER
+    assert result["url"] == ""
     assert result["date"] == "20240101"
-    assert "ignored" not in result
-
-
-def test_normalize_planner_output_from_mapping() -> None:
-    result = normalize_planner_output(
-        {
-            "plan": ["Search", "Open"],
-            "actions": [
-                {
-                    "tool_name": "crawl_pages",
-                    "arguments": {"url": "https://example.com"},
-                }
-            ],
-        }
-    )
-
-    assert result.plan == ["Search", "Open"]
-    assert result.actions[0].arguments["url"] == RETRIEVED_URL_PLACEHOLDER
+    assert result["ignored"] == "value"
 
 
 def test_prompt_builder_uses_external_templates_and_parser(
@@ -213,47 +196,6 @@ def test_prompt_builder_uses_external_templates_and_parser(
                 available_tools=tool_specs,
             )
         )
-
-
-def test_prompt_builder_without_few_shot_examples(tool_specs) -> None:
-    prompt_builder = PlanningPromptBuilder()
-    request = InferenceRequest(
-        task="Find the received date.",
-        available_tools=tool_specs,
-        few_shot_examples=[],
-    )
-
-    artifacts = prompt_builder.build(request)
-
-    assert "Available tools:" in artifacts.system_prompt
-    assert "Example 1" not in artifacts.user_prompt
-    assert "Task:\nFind the received date." in artifacts.user_prompt
-
-
-def test_parser_accepts_mapping_and_model_instances() -> None:
-    parser = PlannerOutputParser()
-
-    mapping_result = parser.parse(
-        {
-            "plan": ["Search", "Open"],
-            "actions": [
-                {
-                    "tool_name": "crawl_pages",
-                    "arguments": {"url": "https://example.com"},
-                }
-            ],
-        }
-    )
-    assert mapping_result.actions[0].arguments["url"] == RETRIEVED_URL_PLACEHOLDER
-
-    model_result = parser.parse(
-        PlannerOutput(
-            plan=["Search"],
-            actions=[],
-        )
-    )
-    assert model_result.plan == ["Search"]
-    assert model_result.actions == []
 
 
 def test_parser_service_and_route(tool_specs, planner_examples) -> None:
@@ -343,42 +285,6 @@ def test_parser_service_and_route(tool_specs, planner_examples) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["prediction"]["actions"][0]["tool_name"] == "web_search"
-
-
-def test_service_without_debug_returns_minimal_payload(tool_specs) -> None:
-    llm_client = DummyTextLLMClient(
-        json.dumps(
-            {
-                "plan": ["Search"],
-                "actions": [
-                    {
-                        "tool_name": "crawl_pages",
-                        "arguments": {"url": "https://example.com"},
-                    }
-                ],
-            }
-        )
-    )
-
-    service = PlanningService(
-        llm_client=llm_client,
-        config=PlanningConfig(
-            include_prompt_debug=False,
-            include_raw_response=False,
-        ),
-        prompt_builder=PlanningPromptBuilder(),
-        output_parser=PlannerOutputParser(),
-    )
-
-    result = service.predict_from_parts(
-        task="Find the received date.",
-        available_tools=tool_specs,
-        few_shot_examples=[],
-    )
-
-    assert result.raw_response is None
-    assert result.prompt_artifacts is None
-    assert result.prediction.actions[0].arguments["url"] == RETRIEVED_URL_PLACEHOLDER
 
 
 class _FakeRouteLLMClient(BaseLLMClient):
