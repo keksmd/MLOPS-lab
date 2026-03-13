@@ -180,16 +180,12 @@ def tmp_json_artifacts(
                 {
                     "task": "What is the received date?",
                     "plan": gold_output.plan,
-                    "actions": [
-                        action.model_dump() for action in gold_output.actions
-                    ],
+                    "actions": [action.model_dump() for action in gold_output.actions],
                 },
                 {
                     "task": "Who is the author?",
                     "plan": gold_output.plan,
-                    "actions": [
-                        action.model_dump() for action in gold_output.actions
-                    ],
+                    "actions": [action.model_dump() for action in gold_output.actions],
                 },
             ],
             ensure_ascii=False,
@@ -203,8 +199,7 @@ def tmp_json_artifacts(
             {
                 "web_search": {
                     "description": (
-                        "Search the web for relevant information "
-                        "using a textual query."
+                        "Search the web for relevant information using a textual query."
                     ),
                     "arguments": {
                         "query": "search query string",

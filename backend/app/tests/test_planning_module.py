@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -68,9 +67,12 @@ class DummyTextLLMClient(BaseLLMClient):
 def test_normalizers_taskcraft_and_loaders(tmp_json_artifacts) -> None:
     assert safe_to_obj('{"a": 1}') == {"a": 1}
 
-    assert clean_plan_text(
-        "Here is the plan of action that I will follow to solve the task:\n```\n1. Search\n2. Open\n```"
-    ) == "1. Search\n2. Open"
+    assert (
+        clean_plan_text(
+            "Here is the plan of action that I will follow to solve the task:\n```\n1. Search\n2. Open\n```"
+        )
+        == "1. Search\n2. Open"
+    )
 
     assert split_plan_steps("1. Search\n2. Open") == ["Search", "Open"]
 
