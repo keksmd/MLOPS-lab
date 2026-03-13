@@ -5,7 +5,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Protocol
 
-from .schemas import EvaluationSample, HeuristicMetricScores, ToolArgumentSpec, ToolSpec
+from .schemas import EvaluationSample, HeuristicMetricScores, ToolSpec
 
 
 class SemanticSimilarityFn(Protocol):
@@ -115,7 +115,7 @@ def compute_duplicate_action_rate(sample: EvaluationSample) -> float:
     if len(actions) < 2:
         return 0.0
     dup = 0
-    for prev, cur in zip(actions[:-1], actions[1:]):
+    for prev, cur in zip(actions[:-1], actions[1:], strict=False):
         if prev.tool_name == cur.tool_name and prev.arguments == cur.arguments:
             dup += 1
     return dup / (len(actions) - 1)
@@ -139,7 +139,9 @@ def _step_similarity(left: str, right: str) -> float:
     return max(seq_ratio, jaccard)
 
 
-def compute_duplicate_step_rate(sample: EvaluationSample, similarity_threshold: float = 0.85) -> float:
+def compute_duplicate_step_rate(
+    sample: EvaluationSample, similarity_threshold: float = 0.85
+) -> float:
     """
     Estimate near-duplicate steps using a lexical similarity heuristic.
 
@@ -164,7 +166,9 @@ def compute_duplicate_step_rate(sample: EvaluationSample, similarity_threshold: 
     return duplicate_pairs / total_pairs if total_pairs else 0.0
 
 
-def compute_tool_set_f1(sample: EvaluationSample) -> tuple[float | None, float | None, float | None]:
+def compute_tool_set_f1(
+    sample: EvaluationSample,
+) -> tuple[float | None, float | None, float | None]:
     """Compute precision, recall, and F1 of predicted tool names against gold tool names."""
     if sample.golden is None:
         return None, None, None
@@ -193,13 +197,19 @@ def compute_web_search_query_nonempty_rate(sample: EvaluationSample) -> float | 
     return ok / len(relevant)
 
 
-def compute_find_archived_url_date_format_rate(sample: EvaluationSample) -> float | None:
+def compute_find_archived_url_date_format_rate(
+    sample: EvaluationSample,
+) -> float | None:
     """Compute the share of find_archived_url actions with date in YYYYMMDD format."""
-    relevant = [a for a in sample.prediction.actions if a.tool_name == "find_archived_url"]
+    relevant = [
+        a for a in sample.prediction.actions if a.tool_name == "find_archived_url"
+    ]
     if not relevant:
         return None
     pattern = re.compile(r"^\d{8}$")
-    ok = sum(1 for action in relevant if pattern.match(str(action.arguments.get("date", ""))))
+    ok = sum(
+        1 for action in relevant if pattern.match(str(action.arguments.get("date", "")))
+    )
     return ok / len(relevant)
 
 
@@ -212,7 +222,10 @@ def compute_placeholder_compliance_rate(sample: EvaluationSample) -> float | Non
         if expected is None:
             continue
         checked += 1
-        if all(action.arguments.get(arg_name) == arg_value for arg_name, arg_value in expected.items()):
+        if all(
+            action.arguments.get(arg_name) == arg_value
+            for arg_name, arg_value in expected.items()
+        ):
             ok += 1
     if checked == 0:
         return None
@@ -265,7 +278,11 @@ def compute_heuristic_metrics(
             else None
         ),
         web_search_query_nonempty_rate=compute_web_search_query_nonempty_rate(sample),
-        find_archived_url_date_format_rate=compute_find_archived_url_date_format_rate(sample),
+        find_archived_url_date_format_rate=compute_find_archived_url_date_format_rate(
+            sample
+        ),
         placeholder_compliance_rate=compute_placeholder_compliance_rate(sample),
-        plan_semantic_similarity=compute_plan_semantic_similarity(sample, similarity_fn),
+        plan_semantic_similarity=compute_plan_semantic_similarity(
+            sample, similarity_fn
+        ),
     )

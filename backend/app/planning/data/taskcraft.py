@@ -9,7 +9,6 @@ from app.metrics.schemas import ToolArgumentSpec, ToolSpec
 
 from ..normalizers import safe_to_obj, simplify_actions, split_plan_steps
 
-
 TOOL_DESCRIPTIONS: dict[str, dict[str, Any]] = {
     "web_search": {
         "description": "Search the web for relevant information using a textual query.",
@@ -60,13 +59,17 @@ def convert_taskcraft_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "task": task,
         "plan": split_plan_steps(trace.get("plan", "")),
-        "actions": [action.model_dump() for action in simplify_actions(trace.get("actions", []))],
+        "actions": [
+            action.model_dump() for action in simplify_actions(trace.get("actions", []))
+        ],
     }
 
 
 def build_processed_dataset(df: pd.DataFrame) -> pd.DataFrame:
     """Convert the raw TaskCraft dataframe into the processed planner dataset."""
-    processed_records = [convert_taskcraft_row(row) for row in df.to_dict(orient="records")]
+    processed_records = [
+        convert_taskcraft_row(row) for row in df.to_dict(orient="records")
+    ]
     processed_df = pd.DataFrame(processed_records)
     processed_df["n_plan_steps"] = processed_df["plan"].apply(len)
     processed_df["n_actions"] = processed_df["actions"].apply(len)
@@ -103,8 +106,14 @@ def build_tool_registry_from_raw(df: pd.DataFrame) -> list[ToolSpec]:
         description = meta.get("description", "")
         arg_meta = meta.get("arguments", {})
         arguments = [
-            ToolArgumentSpec(name=arg_name, description=str(arg_meta.get(arg_name, "")), required=True)
+            ToolArgumentSpec(
+                name=arg_name,
+                description=str(arg_meta.get(arg_name, "")),
+                required=True,
+            )
             for arg_name in sorted(tool_arg_names[tool_name])
         ]
-        registry.append(ToolSpec(tool_name=tool_name, description=description, arguments=arguments))
+        registry.append(
+            ToolSpec(tool_name=tool_name, description=description, arguments=arguments)
+        )
     return registry

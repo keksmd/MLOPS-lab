@@ -4,15 +4,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.metrics.schemas import ActionCall, PlannerOutput, ToolArgumentSpec, ToolSpec
+from app.metrics.schemas import ToolArgumentSpec, ToolSpec
 
 from ..exceptions import RepositoryLoadError
-from ..normalizers import normalize_planner_output, safe_to_obj
+from ..normalizers import normalize_planner_output
 from ..schemas import PlannerExample
 
 OPTIONAL_ARGUMENTS: dict[str, set[str]] = {
     "web_search": {"filter_year"},
 }
+
 
 class JsonArtifactRepository:
     """Generic JSON/JSONL reader used for processed dataset and registry files."""
@@ -30,7 +31,9 @@ class JsonArtifactRepository:
                 return obj
             if isinstance(obj, dict) and isinstance(obj.get("data"), list):
                 return obj["data"]
-            if isinstance(obj, dict) and all(isinstance(value, dict) for value in obj.values()):
+            if isinstance(obj, dict) and all(
+                isinstance(value, dict) for value in obj.values()
+            ):
                 return [{"tool_name": key, **value} for key, value in obj.items()]
         except Exception:
             pass
@@ -45,7 +48,7 @@ class JsonArtifactRepository:
 
 class ToolRegistryLoader:
     """Loads the tool registry JSON produced during dataset preparation."""
-    
+
     def load(self, path: str | Path) -> list[ToolSpec]:
         records = JsonArtifactRepository().load_records(path)
         tools: list[ToolSpec] = []
@@ -56,7 +59,8 @@ class ToolRegistryLoader:
                     ToolArgumentSpec(
                         name=arg_name,
                         description=str(arg_description),
-                        required=arg_name not in OPTIONAL_ARGUMENTS.get(record["tool_name"], set()),
+                        required=arg_name
+                        not in OPTIONAL_ARGUMENTS.get(record["tool_name"], set()),
                     )
                 )
             tools.append(
@@ -77,9 +81,11 @@ class FewShotDatasetLoader:
         examples: list[PlannerExample] = []
         for record in records:
             task = record.get("task", record.get("query", ""))
-            output = normalize_planner_output({
-                "plan": record.get("plan", []),
-                "actions": record.get("actions", []),
-            })
+            output = normalize_planner_output(
+                {
+                    "plan": record.get("plan", []),
+                    "actions": record.get("actions", []),
+                }
+            )
             examples.append(PlannerExample(task=task, output=output))
         return examples

@@ -30,7 +30,9 @@ class MetricsEvaluator:
         self.config = config
         self.llm_client = llm_client
         self.prompt_builder = prompt_builder or JudgePromptBuilder(config.judge)
-        self.similarity_fn = similarity_fn if config.enable_semantic_similarity else None
+        self.similarity_fn = (
+            similarity_fn if config.enable_semantic_similarity else None
+        )
 
     def evaluate_sample(self, sample: EvaluationSample) -> dict[str, Any]:
         """Compute the full metric bundle for a single sample."""
@@ -81,8 +83,7 @@ class MetricsEvaluator:
     ) -> dict[str, Any]:
         """Compute dataset-level metrics by averaging sample-level numeric scores."""
         per_sample_results = [
-            SampleMetricResult(**self.evaluate_sample(sample))
-            for sample in samples
+            SampleMetricResult(**self.evaluate_sample(sample)) for sample in samples
         ]
 
         metric_accumulator: dict[str, list[float]] = {}

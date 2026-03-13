@@ -15,7 +15,9 @@ class OpenRouterConfig(BaseModel):
     timeout_seconds: int = Field(120, description="HTTP timeout in seconds.")
     temperature: float = Field(0.0, description="Sampling temperature.")
     max_tokens: int = Field(1200, description="Maximum generation length.")
-    max_retries: int = Field(3, description="Maximum number of retries for transient errors.")
+    max_retries: int = Field(
+        3, description="Maximum number of retries for transient errors."
+    )
     retry_backoff_seconds: float = Field(
         2.0,
         description="Base retry backoff for transient failures.",

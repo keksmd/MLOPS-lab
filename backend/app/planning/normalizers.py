@@ -7,7 +7,6 @@ from typing import Any
 
 from app.metrics.schemas import ActionCall, PlannerOutput
 
-
 PLACEHOLDER_RULES: dict[str, dict[str, str]] = {
     "crawl_pages": {"url": "<retrieved_url>"},
     "find_archived_url": {"url": "<target_url>"},
@@ -54,11 +53,15 @@ def split_plan_steps(plan_text: str) -> list[str]:
     parts = re.split(r"\n?\s*\d+\.\s+", text)
     parts = [part.strip() for part in parts if part.strip()]
     if len(parts) <= 1:
-        parts = [line.strip("-• ").strip() for line in text.splitlines() if line.strip()]
+        parts = [
+            line.strip("-• ").strip() for line in text.splitlines() if line.strip()
+        ]
     return parts
 
 
-def normalize_action_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def normalize_action_arguments(
+    tool_name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
     """Normalize raw action arguments to the canonical project format."""
     if not isinstance(arguments, dict):
         return {}
@@ -90,7 +93,9 @@ def simplify_actions(raw_actions: Any) -> list[ActionCall]:
             continue
         normalized = ActionCall(
             tool_name=tool_name,
-            arguments=normalize_action_arguments(tool_name, raw_action.get("arguments", {})),
+            arguments=normalize_action_arguments(
+                tool_name, raw_action.get("arguments", {})
+            ),
         )
         if previous is None or previous.model_dump() != normalized.model_dump():
             actions.append(normalized)

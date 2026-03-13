@@ -11,7 +11,9 @@ class PlannerExample(BaseModel):
     """Few-shot example used for planner prompting."""
 
     task: str = Field(..., description="Input task shown to the planning model.")
-    output: PlannerOutput = Field(..., description="Expected planner output for the task.")
+    output: PlannerOutput = Field(
+        ..., description="Expected planner output for the task."
+    )
 
 
 class PromptArtifacts(BaseModel):
@@ -43,7 +45,9 @@ class InferenceResult(BaseModel):
     """Result produced by the planning inference service."""
 
     prediction: PlannerOutput = Field(..., description="Structured planner prediction.")
-    model_name: str | None = Field(default=None, description="Model used for generation.")
+    model_name: str | None = Field(
+        default=None, description="Model used for generation."
+    )
     raw_response: str | None = Field(
         default=None,
         description="Raw model response before parsing and normalization.",

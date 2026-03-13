@@ -29,9 +29,7 @@ class JudgePromptBuilder:
 
     def __init__(self, config: JudgeConfig | None = None) -> None:
         self.config = config or JudgeConfig()
-        self._output_parser = PydanticOutputParser(
-            pydantic_object=JudgeMetricScores
-        )
+        self._output_parser = PydanticOutputParser(pydantic_object=JudgeMetricScores)
 
         system_prompt = PromptTemplate.from_template(
             _load_template("judge_system_prompt.j2"),
@@ -64,9 +62,7 @@ class JudgePromptBuilder:
         """Build the structured judge payload for a single sample."""
         payload: dict[str, object] = {
             "task": sample.task,
-            "available_tools": [
-                tool.model_dump() for tool in sample.available_tools
-            ],
+            "available_tools": [tool.model_dump() for tool in sample.available_tools],
             "predicted_output": sample.prediction.model_dump(),
         }
 
@@ -92,9 +88,7 @@ class JudgePromptBuilder:
 
     def build_system_prompt(self) -> str:
         """Render the system prompt."""
-        prompt_value = self._system_prompt_template.invoke(
-            self._build_system_context()
-        )
+        prompt_value = self._system_prompt_template.invoke(self._build_system_context())
         return self._message_text(prompt_value.messages[0])
 
     def build_user_prompt(self, sample: EvaluationSample) -> str:

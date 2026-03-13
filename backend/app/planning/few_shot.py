@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.metrics.schemas import PlannerOutput
-
 from .schemas import PlannerExample
 
 
@@ -17,7 +15,13 @@ class FewShotSelector:
     ) -> list[PlannerExample]:
         """Select examples by explicit indices, with a fallback to the first valid examples."""
         valid_examples = [ex for ex in examples if ex.task.strip() and ex.output.plan]
-        selected = [examples[i] for i in indices if 0 <= i < len(examples) and examples[i].task.strip() and examples[i].output.plan]
+        selected = [
+            examples[i]
+            for i in indices
+            if 0 <= i < len(examples)
+            and examples[i].task.strip()
+            and examples[i].output.plan
+        ]
         if len(selected) >= fallback_count:
             return selected[:fallback_count]
         for example in valid_examples:

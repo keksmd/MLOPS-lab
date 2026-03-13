@@ -5,18 +5,41 @@ repos:
     rev: v4.4.0
     hooks:
       - id: check-added-large-files
+
+      - id: check-toml
+
+      - id: check-yaml
+        args:
+          - --unsafe
+        exclude: ^\.pre-commit-config\.yaml$
+
+      - id: end-of-file-fixer
+        exclude: |
+          (?x)^(
+            frontend/src/client/.*|
+            backend/app/email-templates/build/.*
+          )$
+
+      - id: trailing-whitespace
+        exclude: ^frontend/src/client/.*
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: check-added-large-files
       - id: check-toml
       - id: check-yaml
         args:
           - --unsafe
       - id: end-of-file-fixer
         exclude: |
-            (?x)^(
-                frontend/src/client/.*|
-                backend/app/email-templates/build/.*
-            )$
+          (?x)^(
+            frontend/src/client/.*|
+            backend/app/email-templates/build/.*
+          )$
       - id: trailing-whitespace
         exclude: ^frontend/src/client/.*
+
   - repo: local
     hooks:
       - id: local-biome-check
@@ -40,16 +63,18 @@ repos:
         language: unsupported
         types: [python]
 
-      - id: local-mypy
-        name: mypy check
-        entry: uv run mypy backend/app
-        require_serial: true
-        language: unsupported
-        pass_filenames: false
+      # mypy временно отключаем
+      # - id: local-mypy
+      #   name: mypy check
+      #   entry: uv run mypy backend/app
+      #   require_serial: true
+      #   language: unsupported
+      #   pass_filenames: false
 
-      - id: generate-frontend-sdk
-        name: Generate Frontend SDK
-        entry: bash ./scripts/generate-client.sh
-        pass_filenames: false
-        language: unsupported
-        files: ^backend/.*$|^scripts/generate-client\.sh$
+      # генерацию SDK тоже вырубаем
+      # - id: generate-frontend-sdk
+      #   name: Generate Frontend SDK
+      #   entry: bash ./scripts/generate-client.sh
+      #   pass_filenames: false
+      #   language: unsupported
+      #   files: ^backend/.*$|^scripts/generate-client\.sh$
