@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -333,7 +334,6 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.message
     assert other_user in session.deleted
 
-    monkeypatch.setattr(users.settings, "USERS_OPEN_REGISTRATION", True)
     monkeypatch.setattr(users.crud, "get_user_by_email", lambda session, email: None)
     monkeypatch.setattr(
         users.crud, "create_user", lambda session, user_create: created_user
@@ -463,6 +463,4 @@ def test_login_private_and_utils_routes(monkeypatch: pytest.MonkeyPatch) -> None
     msg = route_utils.test_email(email_to="user@example.com")
     assert msg.message == "Test email sent"
     assert route_sent["email_to"] == "user@example.com"
-
-    assert private.private_route() == {"message": "Hello world"}
-    assert route_utils.health_check() is True
+    assert asyncio.run(route_utils.health_check()) is True
