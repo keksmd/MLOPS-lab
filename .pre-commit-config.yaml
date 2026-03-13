@@ -1,80 +1,94 @@
-# See https://pre-commit.com for more information
-# See https://pre-commit.com/hooks.html for more hooks
-repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
-    hooks:
-      - id: check-added-large-files
+name: pre-commit
 
-      - id: check-toml
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
 
-      - id: check-yaml
-        args:
-          - --unsafe
-        exclude: ^\.pre-commit-config\.yaml$
+env:
+  # Forks and Dependabot don't have access to secrets
+  HAS_SECRETS: ${{ secrets.PRE_COMMIT != '' }}
 
-      - id: end-of-file-fixer
-        exclude: |
-          (?x)^(
-            frontend/src/client/.*|
-            backend/app/email-templates/build/.*
-          )$
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+      - uses: actions/checkout@v6
+        name: Checkout PR for own repo
+        if: env.HAS_SECRETS == 'true'
+        with:
+          # To be able to commit it needs to fetch the head of the branch, not the
+          # merge commit
+          ref: ${{ github.head_ref }}
+          # And it needs the full history to be able to compute diffs
+          fetch-depth: 0
+          # A token other than the default GITHUB_TOKEN is needed to be able to trigger CI
+          token: ${{ secrets.PRE_COMMIT }}
+      # pre-commit lite ci needs the default checkout configs to work
+      - uses: actions/checkout@v6
+        name: Checkout PR for fork
+        if: env.HAS_SECRETS == 'false'
+        with:
+        # To be able to commit it needs the head branch of the PR, the remote one
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          cache-dependency-glob: |
+            requirements**.txt
+            pyproject.toml
+            uv.lock
+      - name: Install backend dependencies
+        run: uv sync --all-packages
+      - name: Install frontend dependencies
+        run: bun ci
+      - name: Run prek - pre-commit
+        id: precommit
+        run: uvx prek run --from-ref origin/${GITHUB_BASE_REF} --to-ref HEAD --show-diff-on-failure
+        continue-on-error: true
+      - name: Commit and push changes
+        if: env.HAS_SECRETS == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🎨 Auto format and update with pre-commit"
+            git push
+          fi
+      - uses: pre-commit-ci/lite-action@v1.1.0
+        if: env.HAS_SECRETS == 'false'
+        with:
+          msg: 🎨 Auto format and update with pre-commit
+      - name: Error out on pre-commit errors
+        if: steps.precommit.outcome == 'failure'
+        run: exit 1
 
-      - id: trailing-whitespace
-        exclude: ^frontend/src/client/.*
-
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
-    hooks:
-      - id: check-added-large-files
-      - id: check-toml
-      - id: check-yaml
-        args:
-          - --unsafe
-      - id: end-of-file-fixer
-        exclude: |
-          (?x)^(
-            frontend/src/client/.*|
-            backend/app/email-templates/build/.*
-          )$
-      - id: trailing-whitespace
-        exclude: ^frontend/src/client/.*
-
-  - repo: local
-    hooks:
-      - id: local-biome-check
-        name: biome check
-        entry: npm run lint
-        language: system
-        types: [text]
-        files: ^frontend/
-
-      - id: local-ruff-check
-        name: ruff check
-        entry: uv run ruff check --force-exclude --fix --exit-non-zero-on-fix
-        require_serial: true
-        language: unsupported
-        types: [python]
-
-      - id: local-ruff-format
-        name: ruff format
-        entry: uv run ruff format --force-exclude --exit-non-zero-on-format
-        require_serial: true
-        language: unsupported
-        types: [python]
-
-      # mypy временно отключаем
-      # - id: local-mypy
-      #   name: mypy check
-      #   entry: uv run mypy backend/app
-      #   require_serial: true
-      #   language: unsupported
-      #   pass_filenames: false
-
-      # генерацию SDK тоже вырубаем
-      # - id: generate-frontend-sdk
-      #   name: Generate Frontend SDK
-      #   entry: bash ./scripts/generate-client.sh
-      #   pass_filenames: false
-      #   language: unsupported
-      #   files: ^backend/.*$|^scripts/generate-client\.sh$
+  # https://github.com/marketplace/actions/alls-green#why
+  pre-commit-alls-green:  # This job does nothing and is only used for the branch protection
+    if: always()
+    needs:
+      - pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
