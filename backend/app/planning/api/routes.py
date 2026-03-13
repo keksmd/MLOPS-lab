@@ -29,7 +29,14 @@ def get_planning_service() -> PlanningService:
             model_name=model_name,
         )
     )
-    planning_config = PlanningConfig(default_model_name=model_name)
+    planning_config = PlanningConfig(
+        max_few_shot_examples=3,
+        default_model_name=model_name,
+        include_prompt_debug=False,
+        include_raw_response=True,
+        enforce_placeholder_rules=True,
+    )
+
     return PlanningService(llm_client=llm_client, config=planning_config)
 
 

@@ -78,8 +78,8 @@ def build_processed_dataset(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_tool_registry_from_raw(df: pd.DataFrame) -> list[ToolSpec]:
     """Infer the set of tools from raw TaskCraft traces and attach canonical descriptions."""
-    tool_freq = Counter()
-    tool_arg_names = defaultdict(set)
+    tool_freq: Counter[str] = Counter()
+    tool_arg_names: dict[str, set[str]] = defaultdict(set)
 
     for row in df.to_dict(orient="records"):
         agent = safe_to_obj(row.get("ans_from_agent"))

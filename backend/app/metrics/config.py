@@ -60,8 +60,13 @@ class MetricWeights(BaseModel):
 class MetricsConfig(BaseModel):
     """Top-level configuration for the metrics evaluator."""
 
-    judge: JudgeConfig = Field(default_factory=JudgeConfig)
-    weights: MetricWeights = Field(default_factory=MetricWeights)
+    judge: JudgeConfig = Field(
+        default_factory=lambda: JudgeConfig(
+            use_reference_aware_judge=True,
+            include_reasoning=True,
+        )
+    )
+    weights: MetricWeights = Field(default_factory=lambda: MetricWeights())
     enable_judge_metrics: bool = Field(
         True,
         description="Whether judge-based metrics should be computed.",

@@ -93,8 +93,8 @@ class PlanningPromptBuilder:
         system_prompt_value = self._system_prompt_template.invoke(context)
         user_prompt_value = self._user_prompt_template.invoke(context)
 
-        system_prompt = self._message_text(system_prompt_value.messages[0])
-        user_prompt = self._message_text(user_prompt_value.messages[0])
+        system_prompt = self._message_text(system_prompt_value.to_messages()[0])
+        user_prompt = self._message_text(user_prompt_value.to_messages()[0])
 
         return PromptArtifacts(
             system_prompt=system_prompt,

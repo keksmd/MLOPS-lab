@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pandas as pd
 import pytest
@@ -292,7 +292,7 @@ def test_parser_service_and_route(tool_specs, planner_examples) -> None:
 class _FakeRouteLLMClient(BaseLLMClient):
     """Minimal fake OpenRouter client used to validate route wiring."""
 
-    def __init__(self, config: object) -> None:
+    def __init__(self, config: Any) -> None:
         self.config = config
 
     def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:

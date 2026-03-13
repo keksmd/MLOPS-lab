@@ -5,7 +5,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openrouter import ChatOpenRouter
-from pydantic import RootModel
+from pydantic import RootModel, SecretStr
 
 from ..config import OpenRouterConfig
 from ..exceptions import LLMClientError
@@ -30,7 +30,7 @@ class OpenRouterLLMClient(BaseLLMClient):
         )
         self._chat_model = ChatOpenRouter(
             model=config.model_name,
-            api_key=config.api_key,
+            api_key=SecretStr(config.api_key),
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             max_retries=config.max_retries,
@@ -50,7 +50,7 @@ class OpenRouterLLMClient(BaseLLMClient):
                 "user_prompt": user_prompt,
             }
         )
-        return list(prompt_value.messages)
+        return list(prompt_value.to_messages())
 
     @staticmethod
     def _message_to_text(message: BaseMessage) -> str:

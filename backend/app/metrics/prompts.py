@@ -28,7 +28,14 @@ class JudgePromptBuilder:
     """Build judge prompts using external Jinja templates and LangChain parsers."""
 
     def __init__(self, config: JudgeConfig | None = None) -> None:
-        self.config = config or JudgeConfig()
+        self.config = (
+            config
+            if config is not None
+            else JudgeConfig(
+                use_reference_aware_judge=True,
+                include_reasoning=True,
+            )
+        )
         self._output_parser = PydanticOutputParser(pydantic_object=JudgeMetricScores)
 
         system_prompt = PromptTemplate.from_template(
@@ -89,7 +96,7 @@ class JudgePromptBuilder:
     def build_system_prompt(self) -> str:
         """Render the system prompt."""
         prompt_value = self._system_prompt_template.invoke(self._build_system_context())
-        return self._message_text(prompt_value.messages[0])
+        return self._message_text(prompt_value.to_messages()[0])
 
     def build_user_prompt(self, sample: EvaluationSample) -> str:
         """Render the user prompt for one evaluation sample."""
@@ -102,4 +109,4 @@ class JudgePromptBuilder:
                 )
             }
         )
-        return self._message_text(prompt_value.messages[0])
+        return self._message_text(prompt_value.to_messages()[0])

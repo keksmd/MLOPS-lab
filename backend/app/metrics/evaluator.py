@@ -66,14 +66,14 @@ class MetricsEvaluator:
             self.config.weights,
         )
 
-        result = SampleMetricResult(
+        sample_result = SampleMetricResult(
             sample_id=sample.sample_id,
             heuristics=heuristic_scores,
             judge=judge_scores,
             aggregate=aggregate_scores,
             debug=debug,
         )
-        return result.model_dump()
+        return sample_result.model_dump()
 
     def evaluate_dataset(
         self,
@@ -119,9 +119,9 @@ class MetricsEvaluator:
             if values
         }
 
-        result = DatasetMetricResult(
+        dataset_result = DatasetMetricResult(
             sample_count=len(samples),
             metrics=dataset_metrics,
             per_sample=per_sample_results if include_per_sample else [],
         )
-        return result.model_dump()
+        return dataset_result.model_dump()
