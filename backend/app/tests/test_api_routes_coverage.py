@@ -10,7 +10,8 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.api.routes import items, login, private, users, utils as route_utils
+from app.api.routes import items, login, private, users
+from app.api.routes import utils as route_utils
 from app.models import (
     Item,
     ItemCreate,
