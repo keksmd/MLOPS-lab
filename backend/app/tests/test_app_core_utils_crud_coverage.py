@@ -62,9 +62,13 @@ def _make_user(
     )
 
 
-def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_crud_create_update_get_and_create_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     session = _FakeSession(exec_results=[_FakeExecResult(first_value=None)])
-    monkeypatch.setattr(crud, "get_password_hash", lambda password: "test-password-hash")
+    monkeypatch.setattr(
+        crud, "get_password_hash", lambda password: "test-password-hash"
+    )
 
     created = crud.create_user(
         session=session,
@@ -85,15 +89,26 @@ def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch)
     found = crud.get_user_by_email(session=session, email="exists@example.com")
     assert found == existing
 
-    monkeypatch.setattr(crud, "verify_password", lambda plain_password, hashed_password: (True, None))
+    monkeypatch.setattr(
+        crud, "verify_password", lambda plain_password, hashed_password: (True, None)
+    )
     monkeypatch.setattr(crud, "get_user_by_email", lambda session, email: existing)
-    authenticated = crud.authenticate(session=session, email="exists@example.com", password="password123")
+    authenticated = crud.authenticate(
+        session=session, email="exists@example.com", password="password123"
+    )
     assert authenticated == existing
 
-    monkeypatch.setattr(crud, "verify_password", lambda plain_password, hashed_password: (False, None))
-    assert crud.authenticate(session=session, email="exists@example.com", password="wrong") is None
+    monkeypatch.setattr(
+        crud, "verify_password", lambda plain_password, hashed_password: (False, None)
+    )
+    assert (
+        crud.authenticate(session=session, email="exists@example.com", password="wrong")
+        is None
+    )
 
-    monkeypatch.setattr(crud, "get_password_hash", lambda password: "updated-password-hash")
+    monkeypatch.setattr(
+        crud, "get_password_hash", lambda password: "updated-password-hash"
+    )
     updated = crud.update_user(
         session=session,
         db_user=existing,
@@ -112,7 +127,9 @@ def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch)
     assert item.title == "Item"
 
 
-def test_utils_email_helpers_and_password_reset_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_utils_email_helpers_and_password_reset_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(utils.settings, "PROJECT_NAME", "Demo")
     monkeypatch.setattr(utils.settings, "FRONTEND_HOST", "https://frontend")
     monkeypatch.setattr(utils.settings, "EMAIL_RESET_TOKEN_EXPIRE_HOURS", 2)
@@ -148,7 +165,9 @@ def test_utils_email_helpers_and_password_reset_token(monkeypatch: pytest.Monkey
             return "ok"
 
     class _FakeMessage:
-        def __init__(self, *, subject: str, html: str, mail_from: tuple[str, str]) -> None:
+        def __init__(
+            self, *, subject: str, html: str, mail_from: tuple[str, str]
+        ) -> None:
             sent["subject"] = subject
             sent["html"] = html
             sent["mail_from"] = mail_from
@@ -222,6 +241,8 @@ def test_initial_data_init_and_main(monkeypatch: pytest.MonkeyPatch) -> None:
     assert entered["entered"] is True
     assert entered["exited"] is True
 
-    monkeypatch.setattr(initial_data, "init", lambda: called.setdefault("main_called", True))
+    monkeypatch.setattr(
+        initial_data, "init", lambda: called.setdefault("main_called", True)
+    )
     initial_data.main()
     assert called["main_called"] is True
