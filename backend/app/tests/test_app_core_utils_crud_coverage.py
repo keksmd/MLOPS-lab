@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from app import crud, initial_data, utils
-from app.models import Item, ItemCreate, User, UserCreate, UserUpdate
+from app.models import ItemCreate, User, UserCreate, UserUpdate
 
 
 class _FakeExecResult:
@@ -45,18 +45,13 @@ class _FakeSession:
         self.refreshes.append(obj)
 
 
-def _make_user(
-    *,
-    email: str = "user@example.com",
-    is_superuser: bool = False,
-    is_active: bool = True,
-) -> User:
+def _make_user(*, email: str = "user@example.com") -> User:
     return User(
         id=uuid4(),
         email=email,
         full_name="User",
-        is_superuser=is_superuser,
-        is_active=is_active,
+        is_superuser=False,
+        is_active=True,
         hashed_password="hashed",
         created_at=datetime.now(timezone.utc),
     )
@@ -85,12 +80,12 @@ def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch)
     found = crud.get_user_by_email(session=session, email="exists@example.com")
     assert found == existing
 
-    monkeypatch.setattr(crud, "verify_password", lambda plain_password, hashed_password: True)
+    monkeypatch.setattr(crud, "verify_password", lambda plain_password, hashed_password: (True, None))
     monkeypatch.setattr(crud, "get_user_by_email", lambda session, email: existing)
     authenticated = crud.authenticate(session=session, email="exists@example.com", password="password123")
     assert authenticated == existing
 
-    monkeypatch.setattr(crud, "verify_password", lambda plain_password, hashed_password: False)
+    monkeypatch.setattr(crud, "verify_password", lambda plain_password, hashed_password: (False, None))
     assert crud.authenticate(session=session, email="exists@example.com", password="wrong") is None
 
     monkeypatch.setattr(crud, "get_password_hash", lambda password: "updated-password-hash")
@@ -105,16 +100,14 @@ def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch)
     owner = _make_user()
     item = crud.create_item(
         session=session,
-        item_create=ItemCreate(title="Item", description="Desc"),
+        item_in=ItemCreate(title="Item", description="Desc"),
         owner_id=owner.id,
     )
     assert item.owner_id == owner.id
     assert item.title == "Item"
 
 
-def test_utils_email_helpers_and_password_reset_token(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_utils_email_helpers_and_password_reset_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(utils.settings, "PROJECT_NAME", "Demo")
     monkeypatch.setattr(utils.settings, "FRONTEND_HOST", "https://frontend")
     monkeypatch.setattr(utils.settings, "EMAIL_RESET_TOKEN_EXPIRE_HOURS", 2)
@@ -131,8 +124,8 @@ def test_utils_email_helpers_and_password_reset_token(
     original_read_text = Path.read_text
 
     def _fake_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-        if self.name == "dummy.html":
-            return "Hello {{ project_name }} {{ email }} {{ username|default('') }}"
+        if self.name in {"dummy.html", "test_email.html", "reset_password.html", "new_account.html"}:
+            return "Hello {{ project_name }} {{ email }} {{ username|default('') }} {{ password|default('') }} {{ link|default('') }}"
         return original_read_text(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", _fake_read_text)
@@ -160,7 +153,7 @@ def test_utils_email_helpers_and_password_reset_token(
             sent["smtp"] = smtp
             return _FakeResponse()
 
-    monkeypatch.setattr(utils, "Message", _FakeMessage)
+    monkeypatch.setattr(utils.emails, "Message", _FakeMessage)
 
     utils.send_email(
         email_to="user@example.com",
@@ -178,20 +171,20 @@ def test_utils_email_helpers_and_password_reset_token(
         username="user@example.com",
         password="password123",
     )
-    assert "subject" in new_account
-    assert "html_content" in new_account
+    assert new_account.subject
+    assert new_account.html_content
 
     reset_email = utils.generate_reset_password_email(
         email_to="user@example.com",
         email="user@example.com",
         token="token",
     )
-    assert "subject" in reset_email
-    assert "html_content" in reset_email
+    assert reset_email.subject
+    assert reset_email.html_content
 
     test_email = utils.generate_test_email(email_to="user@example.com")
-    assert "subject" in test_email
-    assert "html_content" in test_email
+    assert test_email.subject
+    assert test_email.html_content
 
 
 def test_initial_data_init_and_main(monkeypatch: pytest.MonkeyPatch) -> None:
