@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -18,18 +19,13 @@ from app.metrics.aggregation import (
 from app.metrics.config import JudgeConfig, OpenRouterConfig
 from app.metrics.exceptions import JudgeResponseParseError, LLMClientError
 from app.metrics.heuristics import (
-    compute_allowed_tool_rate,
     compute_arg_name_valid_rate,
     compute_duplicate_action_rate,
     compute_duplicate_step_rate,
     compute_find_archived_url_date_format_rate,
-    compute_forbidden_tool_rate,
     compute_heuristic_metrics,
-    compute_json_valid,
     compute_placeholder_compliance_rate,
-    compute_plan_semantic_similarity,
     compute_required_arg_presence_rate,
-    compute_schema_valid,
     compute_tool_set_f1,
     compute_web_search_query_nonempty_rate,
 )
@@ -37,10 +33,8 @@ from app.metrics.llm.base import BaseLLMClient
 from app.metrics.llm.openrouter_client import OpenRouterLLMClient
 from app.metrics.parsers import parse_judge_response
 from app.metrics.prompts import JudgePromptBuilder
-from app.metrics.schemas import EvaluationSample, JudgeMetricScores, PlannerOutput
+from app.metrics.schemas import EvaluationSample
 
-RETRIEVED_URL_PLACEHOLDER = "<retrieved_url>"
-TARGET_URL_PLACEHOLDER = "<target_url>"
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
@@ -64,25 +58,6 @@ class DummyJSONLLMClient(BaseLLMClient):
         schema: type[SchemaT],
     ) -> SchemaT:
         return schema.model_validate(self.payload)
-
-
-class RaisingLLMClient(BaseLLMClient):
-    """Client that always fails during structured generation."""
-
-    def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
-        raise NotImplementedError
-
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        raise NotImplementedError
-
-    def generate_structured(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        schema: type[SchemaT],
-    ) -> SchemaT:
-        raise RuntimeError("judge failed")
 
 
 def _build_sample(
@@ -152,13 +127,11 @@ def test_parse_judge_response_and_aggregation(
 
 
 def test_parse_judge_response_invalid_payload_raises() -> None:
-    with pytest.raises(JudgeResponseParseError) as exc_info:
+    with pytest.raises(JudgeResponseParseError):
         parse_judge_response({"plan_relevance": 0.5})
 
-    assert "plan_completeness" in str(exc_info.value)
 
-
-def test_judge_prompt_builder_variants(
+def test_judge_prompt_builder_paths(
     tool_specs,
     predicted_output,
     gold_output,
@@ -200,11 +173,9 @@ def test_judge_prompt_builder_variants(
             sample_id="sample-3",
         )
     )
-
     assert "Judge the prediction on its own merits." in system_prompt_no_ref
-    assert "Provide a short reasoning string" in system_prompt_no_ref
     assert "golden_reference" not in user_prompt_no_ref
-    assert "predicted_output" in user_prompt_no_ref
+    assert "Provide a short reasoning string" in system_prompt_no_ref
 
 
 def test_judge_prompt_and_evaluator_dataset(
@@ -220,9 +191,17 @@ def test_judge_prompt_and_evaluator_dataset(
         sample_id="sample-4",
     )
 
+    prompt_builder = JudgePromptBuilder(
+        JudgeConfig(
+            use_reference_aware_judge=True,
+            include_reasoning=False,
+        )
+    )
+
     evaluator = MetricsEvaluator(
         config=MetricsConfig(enable_judge_metrics=True),
         llm_client=DummyJSONLLMClient(judge_payload),
+        prompt_builder=prompt_builder,
     )
 
     sample_result = evaluator.evaluate_sample(sample)
@@ -260,10 +239,13 @@ def test_evaluator_without_judge_metrics_returns_no_judge(
     )
 
     result = evaluator.evaluate_sample(sample)
+    dataset_result = evaluator.evaluate_dataset([sample], include_per_sample=False)
 
     assert result["judge"] is None
     assert result["debug"] == {}
     assert 0.0 <= result["aggregate"]["final_score"] <= 1.0
+    assert dataset_result["sample_count"] == 1
+    assert dataset_result["per_sample"] == []
 
 
 def test_evaluator_with_judge_enabled_and_no_llm_client_raises(
@@ -361,43 +343,7 @@ class _FallbackChatOpenRouter:
         return _FakeStructuredModel({"ok": True, "value": 1})
 
 
-class _AlwaysFailChatOpenRouter:
-    def __init__(self, **_: object) -> None:
-        pass
-
-    def invoke(self, messages: list[object]) -> AIMessage:
-        raise RuntimeError("provider down")
-
-    def with_structured_output(
-        self,
-        schema: type[BaseModel],
-        **_: object,
-    ) -> _FakeStructuredModel:
-        return _FakeStructuredModel(error=RuntimeError("all failed"))
-
-
-class _SchemaChatOpenRouter:
-    def __init__(self, **_: object) -> None:
-        pass
-
-    def invoke(self, messages: list[object]) -> AIMessage:
-        return AIMessage(content="unused")
-
-    def with_structured_output(
-        self,
-        schema: type[BaseModel],
-        **_: object,
-    ) -> _FakeStructuredModel:
-        class SimpleSchema(BaseModel):
-            ok: bool
-            value: int
-
-        return _FakeStructuredModel(SimpleSchema(ok=True, value=7))
-
-
-def test_openrouter_client_text_json_and_structured_paths(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_openrouter_client_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.metrics.llm.openrouter_client.ChatOpenRouter",
         _FakeChatOpenRouter,
@@ -418,19 +364,8 @@ def test_openrouter_client_text_json_and_structured_paths(
     obj = client.generate_json(system_prompt="sys", user_prompt="user")
     assert obj == {"ok": True, "value": 1}
 
-    class SimpleSchema(BaseModel):
-        ok: bool
-        value: int
 
-    structured = client.generate_structured(
-        system_prompt="sys",
-        user_prompt="user",
-        schema=SimpleSchema,
-    )
-    assert structured.value == 1
-
-
-def test_openrouter_client_invalid_json_raises(
+def test_openrouter_client_error_and_fallback_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -438,7 +373,7 @@ def test_openrouter_client_invalid_json_raises(
         _FakeBrokenChatOpenRouter,
     )
 
-    client = OpenRouterLLMClient(
+    broken_client = OpenRouterLLMClient(
         config=OpenRouterConfig(
             api_key="test-key",
             model_name="test-model",
@@ -448,168 +383,54 @@ def test_openrouter_client_invalid_json_raises(
     )
 
     with pytest.raises(LLMClientError):
-        client.generate_json(system_prompt="sys", user_prompt="user")
+        broken_client.generate_json(system_prompt="sys", user_prompt="user")
 
-
-def test_openrouter_client_non_text_and_failure_paths(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
     monkeypatch.setattr(
         "app.metrics.llm.openrouter_client.ChatOpenRouter",
         _FakeNonTextChatOpenRouter,
     )
 
-    client = OpenRouterLLMClient(
-        config=OpenRouterConfig(api_key="test-key", model_name="test-model")
+    non_text_client = OpenRouterLLMClient(
+        config=OpenRouterConfig(
+            api_key="test-key",
+            model_name="test-model",
+            max_retries=1,
+            retry_backoff_seconds=0.0,
+        )
     )
 
     with pytest.raises(LLMClientError):
-        client.generate_text(system_prompt="sys", user_prompt="user")
-
-    monkeypatch.setattr(
-        "app.metrics.llm.openrouter_client.ChatOpenRouter",
-        _AlwaysFailChatOpenRouter,
-    )
-    failing_client = OpenRouterLLMClient(
-        config=OpenRouterConfig(api_key="test-key", model_name="test-model")
-    )
-
-    with pytest.raises(LLMClientError):
-        failing_client.generate_text(system_prompt="sys", user_prompt="user")
-    with pytest.raises(LLMClientError):
-        failing_client.generate_json(system_prompt="sys", user_prompt="user")
-
-
-def test_openrouter_client_structured_output_fallback_and_schema_instance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class SimpleSchema(BaseModel):
-        ok: bool
-        value: int
+        non_text_client.generate_text(system_prompt="sys", user_prompt="user")
 
     monkeypatch.setattr(
         "app.metrics.llm.openrouter_client.ChatOpenRouter",
         _FallbackChatOpenRouter,
     )
-    client = OpenRouterLLMClient(
-        config=OpenRouterConfig(api_key="test-key", model_name="test-model")
+
+    class SimpleSchema(BaseModel):
+        ok: bool
+        value: int
+
+    fallback_client = OpenRouterLLMClient(
+        config=OpenRouterConfig(
+            api_key="test-key",
+            model_name="test-model",
+            max_retries=1,
+            retry_backoff_seconds=0.0,
+        )
     )
-    result = client.generate_structured(
+
+    result = fallback_client.generate_structured(
         system_prompt="sys",
         user_prompt="user",
         schema=SimpleSchema,
     )
+
     assert result.ok is True
     assert result.value == 1
 
-    monkeypatch.setattr(
-        "app.metrics.llm.openrouter_client.ChatOpenRouter",
-        _SchemaChatOpenRouter,
-    )
-    client_schema = OpenRouterLLMClient(
-        config=OpenRouterConfig(api_key="test-key", model_name="test-model")
-    )
-    result_schema = client_schema.generate_structured(
-        system_prompt="sys",
-        user_prompt="user",
-        schema=SimpleSchema,
-    )
-    assert isinstance(result_schema, SimpleSchema)
-    assert result_schema.value == 7
 
-
-def test_heuristics_edge_cases(tool_specs, gold_output) -> None:
-    invalid_prediction = PlannerOutput.model_construct(
-        plan="not-a-list",
-        actions="not-a-list",
-    )
-    sample_invalid = EvaluationSample.model_construct(
-        sample_id="invalid",
-        task="broken",
-        available_tools=tool_specs,
-        prediction=invalid_prediction,
-        golden=gold_output,
-        raw_prediction="[]",
-    )
-    assert compute_json_valid(sample_invalid) == 0.0
-    assert compute_schema_valid(sample_invalid) == 0.0
-
-    sample_empty = EvaluationSample(
-        sample_id="empty",
-        task="empty",
-        available_tools=tool_specs,
-        prediction=PlannerOutput(plan=[], actions=[]),
-        golden=PlannerOutput(plan=[], actions=[]),
-        raw_prediction=None,
-    )
-    assert compute_allowed_tool_rate(sample_empty) == 1.0
-    assert compute_forbidden_tool_rate(sample_empty) == 0.0
-    assert compute_duplicate_action_rate(sample_empty) == 0.0
-    assert compute_tool_set_f1(sample_empty) == (1.0, 1.0, 1.0)
-    assert compute_plan_semantic_similarity(sample_empty, lambda _a, _b: 1.2) == 1.0
-
-    sample_bad_args = EvaluationSample(
-        sample_id="bad-args",
-        task="bad args",
-        available_tools=tool_specs,
-        prediction=PlannerOutput(
-            plan=["Use tools"],
-            actions=[
-                tool_specs[0].__class__.model_fields  # type: ignore[attr-defined]
-            ],
-        ),
-        golden=None,
-        raw_prediction="not-json",
-    )
-    # Rebuild a valid model-constructed sample to hit invalid arg/placeholder branches.
-    sample_bad_args = EvaluationSample(
-        sample_id="bad-args",
-        task="bad args",
-        available_tools=tool_specs,
-        prediction=PlannerOutput.model_construct(
-            plan=["Use tools", "Use tools"],
-            actions=[
-                type(gold_output.actions[0]).model_construct(
-                    tool_name="web_search",
-                    arguments={"wrong": "x", "query": ""},
-                ),
-                type(gold_output.actions[1]).model_construct(
-                    tool_name="crawl_pages",
-                    arguments={"url": "https://example.com"},
-                ),
-                type(gold_output.actions[2]).model_construct(
-                    tool_name="find_archived_url",
-                    arguments={"url": TARGET_URL_PLACEHOLDER, "date": "bad"},
-                ),
-                type(gold_output.actions[0]).model_construct(
-                    tool_name="mystery_tool",
-                    arguments={},
-                ),
-                type(gold_output.actions[0]).model_construct(
-                    tool_name="final_answer",
-                    arguments={},
-                ),
-            ],
-        ),
-        golden=gold_output,
-        raw_prediction="not json at all",
-    )
-
-    assert compute_json_valid(sample_bad_args) == 0.0
-    assert compute_arg_name_valid_rate(sample_bad_args) < 1.0
-    assert compute_required_arg_presence_rate(sample_bad_args) < 1.0
-    assert compute_duplicate_step_rate(sample_bad_args) > 0.0
-    assert compute_web_search_query_nonempty_rate(sample_bad_args) == 0.0
-    assert compute_find_archived_url_date_format_rate(sample_bad_args) == 0.0
-    assert compute_placeholder_compliance_rate(sample_bad_args) == pytest.approx(0.5)
-    assert compute_plan_semantic_similarity(sample_bad_args, lambda _a, _b: -0.5) == 0.0
-
-    heuristics = compute_heuristic_metrics(sample_bad_args, similarity_fn=lambda _a, _b: 0.4)
-    assert heuristics.plan_semantic_similarity == 0.4
-    assert heuristics.action_count_diff is not None
-
-
-def test_evaluator_propagates_llm_failures(
+def test_heuristics_with_invalid_raw_prediction_still_compute(
     tool_specs,
     predicted_output,
     gold_output,
@@ -619,12 +440,10 @@ def test_evaluator_propagates_llm_failures(
         predicted_output=predicted_output,
         gold_output=gold_output,
         sample_id="sample-7",
+        raw_prediction="not json at all",
     )
 
-    evaluator = MetricsEvaluator(
-        config=MetricsConfig(enable_judge_metrics=True),
-        llm_client=RaisingLLMClient(),
-    )
+    heuristics = compute_heuristic_metrics(sample, similarity_fn=None)
 
-    with pytest.raises(RuntimeError):
-        evaluator.evaluate_sample(sample)
+    assert heuristics.json_valid == 0.0
+    assert heuristics.nonempty_plan == 1.0

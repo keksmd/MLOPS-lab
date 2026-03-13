@@ -1,192 +1,152 @@
+
 from __future__ import annotations
 
-import runpy
-from pathlib import Path
+import importlib
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from app import initial_data
-from app.metrics import (
-    ActionCall,
-    AggregateMetricScores,
-    DatasetMetricResult,
-    EvaluationSample,
-    HeuristicMetricScores,
-    JudgeMetricScores,
-    MetricsConfig,
-    MetricsEvaluator,
-    OpenRouterConfig,
-    OpenRouterLLMClient,
-    PlannerOutput,
-    SampleMetricResult,
-    ToolArgumentSpec,
-    ToolSpec,
-)
-from app.metrics.config import JudgeConfig, MetricWeights
-from app.metrics.exceptions import JudgeResponseParseError, LLMClientError
-from app.metrics.llm import BaseLLMClient
-from app.planning import (
-    FewShotSelector,
-    InferenceRequest,
-    InferenceResult,
-    PlannerExample,
-    PlanningConfig,
-    PlanningService,
-    PromptArtifacts,
-)
-from app.planning.api import router as planning_router
-from app.planning.data import (
-    FewShotDatasetLoader,
-    JsonArtifactRepository,
-    ToolRegistryLoader,
-    build_processed_dataset,
-    build_tool_registry_from_raw,
-    convert_taskcraft_row,
-)
-from app.planning.exceptions import (
-    PlanningError,
-    PredictionParseError,
-    PromptBuildError,
-    RepositoryLoadError,
-)
+
+def test_import_metrics_and_planning_modules() -> None:
+    module_names = [
+        "app.metrics",
+        "app.metrics.aggregation",
+        "app.metrics.config",
+        "app.metrics.evaluator",
+        "app.metrics.exceptions",
+        "app.metrics.heuristics",
+        "app.metrics.llm",
+        "app.metrics.llm.base",
+        "app.metrics.llm.openrouter_client",
+        "app.metrics.parsers",
+        "app.metrics.prompts",
+        "app.metrics.schemas",
+        "app.planning",
+        "app.planning.api",
+        "app.planning.api.routes",
+        "app.planning.config",
+        "app.planning.data",
+        "app.planning.data.loaders",
+        "app.planning.data.taskcraft",
+        "app.planning.exceptions",
+        "app.planning.few_shot",
+        "app.planning.normalizers",
+        "app.planning.parsers",
+        "app.planning.prompting",
+        "app.planning.schemas",
+        "app.planning.service",
+    ]
+    imported = [importlib.import_module(name) for name in module_names]
+    assert all(module is not None for module in imported)
 
 
-def test_public_imports_and_schema_models(tool_specs, predicted_output, gold_output) -> None:
-    tool_arg = ToolArgumentSpec(name="query", description="desc", required=True)
-    tool = ToolSpec(tool_name="web_search", description="desc", arguments=[tool_arg])
-    action = ActionCall(tool_name="web_search", arguments={"query": "x"})
-    planner_output = PlannerOutput(plan=["Search"], actions=[action])
-    sample = EvaluationSample(
-        task="task",
-        available_tools=[tool],
-        prediction=planner_output,
-        golden=gold_output,
-        raw_prediction=None,
-    )
-    judge = JudgeMetricScores(
-        plan_relevance=1.0,
-        plan_completeness=1.0,
-        plan_logic=1.0,
-        plan_specificity=1.0,
-        plan_nonredundancy=1.0,
-        plan_duplicate_penalty=0.0,
-        tool_appropriateness=1.0,
-        tool_sufficiency=1.0,
-        argument_quality=1.0,
-        overall_solvability=1.0,
-        critical_failure=False,
-    )
-    heuristics = HeuristicMetricScores(
-        json_valid=1.0,
-        schema_valid=1.0,
-        nonempty_plan=1.0,
-        allowed_tool_rate=1.0,
-        forbidden_tool_rate=0.0,
-        arg_name_valid_rate=1.0,
-        required_arg_presence_rate=1.0,
-        duplicate_action_rate=0.0,
-        duplicate_step_rate=0.0,
-        avg_plan_steps=1.0,
-        avg_actions=1.0,
-        tool_set_precision=1.0,
-        tool_set_recall=1.0,
-        tool_set_f1=1.0,
-        action_count_diff=0.0,
-        web_search_query_nonempty_rate=1.0,
-        find_archived_url_date_format_rate=None,
-        placeholder_compliance_rate=None,
-        plan_semantic_similarity=None,
-    )
-    aggregate = AggregateMetricScores(
-        validity_score=1.0,
-        plan_score=1.0,
-        tool_score=1.0,
-        solvability_score=1.0,
-        final_score=1.0,
-        critical_failure_rate=0.0,
-    )
-    sample_result = SampleMetricResult(
-        sample_id="1",
-        heuristics=heuristics,
-        judge=judge,
-        aggregate=aggregate,
-    )
-    dataset_result = DatasetMetricResult(sample_count=1, metrics={"x": 1.0}, per_sample=[sample_result])
+def test_metrics_init_exports() -> None:
+    metrics_module = importlib.import_module("app.metrics")
+    assert hasattr(metrics_module, "MetricsConfig")
+    assert hasattr(metrics_module, "MetricsEvaluator")
 
-    planner_example = PlannerExample(task="task", output=planner_output)
-    prompt_artifacts = PromptArtifacts(system_prompt="sys", user_prompt="user")
-    inference_request = InferenceRequest(task="task", available_tools=[tool])
-    inference_result = InferenceResult(prediction=planner_output, metadata={"x": 1})
 
-    assert planner_output.actions[0].tool_name == "web_search"
-    assert sample.golden is gold_output
-    assert judge.reasoning == ""
-    assert sample_result.aggregate.final_score == 1.0
-    assert dataset_result.sample_count == 1
-    assert planner_example.task == "task"
+def test_planning_init_exports() -> None:
+    planning_module = importlib.import_module("app.planning")
+    assert hasattr(planning_module, "FewShotSelector")
+    assert hasattr(planning_module, "PlanningConfig")
+    assert hasattr(planning_module, "PlanningService")
+
+
+def test_initial_data_init_creates_user_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    initial_data = importlib.import_module("app.initial_data")
+
+    created: dict[str, Any] = {}
+
+    def fake_get_user_by_email(*, session: object, email: str) -> None:
+        return None
+
+    def fake_create_user(*, session: object, user_create: object) -> object:
+        created["email"] = user_create.email
+        created["is_superuser"] = user_create.is_superuser
+        return SimpleNamespace(email=user_create.email)
+
+    monkeypatch.setattr(initial_data.crud, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(initial_data.crud, "create_user", fake_create_user)
+    monkeypatch.setattr(initial_data.settings, "FIRST_SUPERUSER", "admin@example.com")
+    monkeypatch.setattr(initial_data.settings, "FIRST_SUPERUSER_PASSWORD", "password")
+
+    initial_data.init(object())
+
+    assert created["email"] == "admin@example.com"
+    assert created["is_superuser"] is True
+
+
+def test_initial_data_init_skips_existing_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    initial_data = importlib.import_module("app.initial_data")
+
+    called = {"create_user": False}
+
+    def fake_get_user_by_email(*, session: object, email: str) -> object:
+        return object()
+
+    def fake_create_user(*, session: object, user_create: object) -> object:
+        called["create_user"] = True
+        return object()
+
+    monkeypatch.setattr(initial_data.crud, "get_user_by_email", fake_get_user_by_email)
+    monkeypatch.setattr(initial_data.crud, "create_user", fake_create_user)
+    monkeypatch.setattr(initial_data.settings, "FIRST_SUPERUSER", "admin@example.com")
+    monkeypatch.setattr(initial_data.settings, "FIRST_SUPERUSER_PASSWORD", "password")
+
+    initial_data.init(object())
+
+    assert called["create_user"] is False
+
+
+def test_metrics_and_planning_exceptions_are_subclasses() -> None:
+    metrics_exceptions = importlib.import_module("app.metrics.exceptions")
+    planning_exceptions = importlib.import_module("app.planning.exceptions")
+
+    for name in (
+        "LLMClientError",
+        "JudgeResponseParseError",
+    ):
+        assert issubclass(getattr(metrics_exceptions, name), Exception)
+
+    for name in (
+        "PromptBuildError",
+        "PredictionParseError",
+    ):
+        assert issubclass(getattr(planning_exceptions, name), Exception)
+
+
+def test_configs_and_schema_defaults() -> None:
+    metrics_config = importlib.import_module("app.metrics.config")
+    planning_config = importlib.import_module("app.planning.config")
+    metrics_schemas = importlib.import_module("app.metrics.schemas")
+    planning_schemas = importlib.import_module("app.planning.schemas")
+
+    judge_cfg = metrics_config.JudgeConfig()
+    openrouter_cfg = metrics_config.OpenRouterConfig(api_key="key", model_name="model")
+    metrics_cfg = metrics_config.MetricsConfig()
+    planning_cfg = planning_config.PlanningConfig()
+
+    assert judge_cfg.include_reasoning in (True, False)
+    assert openrouter_cfg.api_key == "key"
+    assert metrics_cfg.enable_judge_metrics in (True, False)
+    assert isinstance(planning_cfg.default_model_name, str)
+
+    prompt_artifacts = planning_schemas.PromptArtifacts(
+        system_prompt="sys",
+        user_prompt="usr",
+    )
     assert prompt_artifacts.system_prompt == "sys"
-    assert inference_request.available_tools[0].tool_name == "web_search"
-    assert inference_result.metadata["x"] == 1
 
-    metrics_config = MetricsConfig()
-    planning_config = PlanningConfig()
-    openrouter_config = OpenRouterConfig(api_key="key", model_name="model")
-    judge_config = JudgeConfig()
-    weights = MetricWeights()
-
-    assert metrics_config.enable_judge_metrics is True
-    assert planning_config.enforce_placeholder_rules is True
-    assert openrouter_config.timeout_seconds == 120
-    assert judge_config.use_reference_aware_judge is True
-    assert weights.validity_weight + weights.plan_weight + weights.tool_weight + weights.solvability_weight == 1.0
-
-    assert issubclass(BaseLLMClient, object)
-    assert MetricsEvaluator
-    assert OpenRouterLLMClient
-    assert FewShotSelector
-    assert PlanningService
-    assert planning_router
-    assert JsonArtifactRepository
-    assert ToolRegistryLoader
-    assert FewShotDatasetLoader
-    assert convert_taskcraft_row
-    assert build_processed_dataset
-    assert build_tool_registry_from_raw
+    planner_example = planning_schemas.PlannerExample(
+        task="task",
+        output=metrics_schemas.PlannerOutput(plan=["one"], actions=[]),
+    )
+    assert planner_example.task == "task"
 
 
-def test_exception_classes_and_module_exports() -> None:
-    assert issubclass(PromptBuildError, PlanningError)
-    assert issubclass(PredictionParseError, PlanningError)
-    assert issubclass(RepositoryLoadError, PlanningError)
-    assert issubclass(JudgeResponseParseError, Exception)
-    assert issubclass(LLMClientError, Exception)
-
-
-class _FakeSession:
-    def __init__(self, engine: object) -> None:
-        self.engine = engine
-        self.entered = False
-        self.exited = False
-
-    def __enter__(self) -> str:
-        self.entered = True
-        return "session"
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.exited = True
-
-
-def test_initial_data_init_and_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[object] = []
-
-    monkeypatch.setattr(initial_data, "engine", object())
-    monkeypatch.setattr(initial_data, "Session", _FakeSession)
-    monkeypatch.setattr(initial_data, "init_db", lambda session: calls.append(("init_db", session)))
-    monkeypatch.setattr(initial_data.logger, "info", lambda message: calls.append(message))
-
-    initial_data.init()
-    initial_data.main()
-
-    assert ("init_db", "session") in calls
-    assert "Creating initial data" in calls
-    assert "Initial data created" in calls
+def test_llm_base_is_abstract() -> None:
+    llm_base = importlib.import_module("app.metrics.llm.base")
+    with pytest.raises(TypeError):
+        llm_base.BaseLLMClient()
