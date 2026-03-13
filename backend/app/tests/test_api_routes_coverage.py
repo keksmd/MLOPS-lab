@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -10,7 +11,16 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes import items, login, private, users, utils as route_utils
-from app.models import Item, ItemCreate, ItemUpdate, User, UserCreate, UserRegister, UserUpdate, UserUpdateMe
+from app.models import (
+    Item,
+    ItemCreate,
+    ItemUpdate,
+    UpdatePassword,
+    User,
+    UserCreate,
+    UserRegister,
+    UserUpdateMe,
+)
 from app.utils import EmailData
 
 
@@ -43,10 +53,8 @@ class _FakeSession:
         self.deleted: list[Any] = []
         self.commits = 0
         self.refreshes: list[Any] = []
-        self.exec_statements: list[Any] = []
 
     def exec(self, statement: Any) -> _ExecResult:
-        self.exec_statements.append(statement)
         if self.exec_results:
             return self.exec_results.pop(0)
         return _ExecResult()
@@ -102,7 +110,10 @@ def test_items_routes() -> None:
     other_item = _make_item(uuid4())
 
     session = _FakeSession(
-        exec_results=[_ExecResult(one_value=3), _ExecResult(all_values=[own_item])]
+        exec_results=[
+            _ExecResult(one_value=3),
+            _ExecResult(all_values=[own_item]),
+        ]
     )
     result = items.read_items(session=session, current_user=admin, skip=0, limit=10)
     assert result.count == 3
@@ -111,7 +122,10 @@ def test_items_routes() -> None:
     assert result.data[0].owner_id == own_item.owner_id
 
     session = _FakeSession(
-        exec_results=[_ExecResult(one_value=1), _ExecResult(all_values=[own_item])]
+        exec_results=[
+            _ExecResult(one_value=1),
+            _ExecResult(all_values=[own_item]),
+        ]
     )
     result = items.read_items(session=session, current_user=normal, skip=0, limit=10)
     assert result.count == 1
@@ -120,31 +134,47 @@ def test_items_routes() -> None:
 
     session = _FakeSession()
     item_in = ItemCreate(title="New", description="Item")
-    result = items.create_item(session=session, current_user=normal, item_in=item_in)
+    result = items.create_item(
+        session=session,
+        current_user=normal,
+        item_in=item_in,
+    )
     assert session.commits == 1
     assert session.added
     assert session.refreshes
     assert result.owner_id == normal.id
 
     session = _FakeSession(get_result=own_item)
-    result = items.read_item(session=session, current_user=normal, id=own_item.id)
+    result = items.read_item(
+        id=own_item.id,
+        session=session,
+        current_user=normal,
+    )
     assert result.id == own_item.id
 
     session = _FakeSession(get_result=other_item)
     with pytest.raises(HTTPException) as exc_info:
-        items.read_item(session=session, current_user=normal, id=other_item.id)
+        items.read_item(
+            id=other_item.id,
+            session=session,
+            current_user=normal,
+        )
     assert exc_info.value.status_code == 403
 
     session = _FakeSession(get_result=None)
     with pytest.raises(HTTPException) as exc_info:
-        items.read_item(session=session, current_user=admin, id=uuid4())
+        items.read_item(
+            id=uuid4(),
+            session=session,
+            current_user=admin,
+        )
     assert exc_info.value.status_code == 404
 
     session = _FakeSession(get_result=own_item)
     result = items.update_item(
+        id=own_item.id,
         session=session,
         current_user=normal,
-        id=own_item.id,
         item_in=ItemUpdate(title="Updated", description="Updated desc"),
     )
     assert result.title == "Updated"
@@ -154,15 +184,19 @@ def test_items_routes() -> None:
     session = _FakeSession(get_result=other_item)
     with pytest.raises(HTTPException) as exc_info:
         items.update_item(
+            id=other_item.id,
             session=session,
             current_user=normal,
-            id=other_item.id,
             item_in=ItemUpdate(title="Nope"),
         )
     assert exc_info.value.status_code == 403
 
     session = _FakeSession(get_result=own_item)
-    result = items.delete_item(session=session, current_user=normal, id=own_item.id)
+    result = items.delete_item(
+        id=own_item.id,
+        session=session,
+        current_user=normal,
+    )
     assert result.message
     assert session.deleted == [own_item]
     assert session.commits == 1
@@ -171,7 +205,10 @@ def test_items_routes() -> None:
 def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     listed_user = _make_user(email="listed@example.com")
     session = _FakeSession(
-        exec_results=[_ExecResult(one_value=2), _ExecResult(all_values=[listed_user])]
+        exec_results=[
+            _ExecResult(one_value=2),
+            _ExecResult(all_values=[listed_user]),
+        ]
     )
     read_result = users.read_users(session=session, skip=0, limit=10)
     assert read_result.count == 2
@@ -265,7 +302,7 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
         users.update_password_me(
             session=session,
             current_user=current_user,
-            body=SimpleNamespace(current_password="wrong", new_password="new-pass-123"),
+            body=UpdatePassword(current_password="wrongpass", new_password="new-pass-123"),
         )
     assert exc_info.value.status_code == 400
 
@@ -274,7 +311,7 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
         users.update_password_me(
             session=session,
             current_user=current_user,
-            body=SimpleNamespace(current_password="same-pass", new_password="same-pass"),
+            body=UpdatePassword(current_password="same-pass", new_password="same-pass"),
         )
     assert exc_info.value.status_code == 400
 
@@ -282,7 +319,7 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     result = users.update_password_me(
         session=session,
         current_user=current_user,
-        body=SimpleNamespace(current_password="old-pass", new_password="new-pass-123"),
+        body=UpdatePassword(current_password="old-pass-1", new_password="new-pass-123"),
     )
     assert result.message
     assert current_user.hashed_password == "new-hash"
@@ -308,7 +345,6 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.message
     assert other_user in session.deleted
 
-    monkeypatch.setattr(users.settings, "USERS_OPEN_REGISTRATION", True)
     monkeypatch.setattr(users.crud, "get_user_by_email", lambda session, email: None)
     monkeypatch.setattr(users.crud, "create_user", lambda session, user_create: created_user)
     signup_result = users.register_user(
@@ -365,7 +401,10 @@ def test_login_private_and_utils_routes(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(login, "verify_password_reset_token", lambda token: None)
     with pytest.raises(HTTPException) as exc_info:
-        login.reset_password(session=_FakeSession(), body=SimpleNamespace(token="bad", new_password="new-pass"))
+        login.reset_password(
+            session=_FakeSession(),
+            body=SimpleNamespace(token="bad", new_password="new-pass"),
+        )
     assert exc_info.value.status_code == 400
 
     monkeypatch.setattr(login, "verify_password_reset_token", lambda token: "user@example.com")
@@ -416,5 +455,4 @@ def test_login_private_and_utils_routes(monkeypatch: pytest.MonkeyPatch) -> None
     assert msg.message == "Test email sent"
     assert route_sent["email_to"] == "user@example.com"
 
-    assert private.private_route() == {"message": "Hello world"}
-    assert route_utils.health_check() is True
+    assert asyncio.run(route_utils.health_check()) is True

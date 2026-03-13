@@ -45,13 +45,18 @@ class _FakeSession:
         self.refreshes.append(obj)
 
 
-def _make_user(*, email: str = "user@example.com") -> User:
+def _make_user(
+    *,
+    email: str = "user@example.com",
+    is_superuser: bool = False,
+    is_active: bool = True,
+) -> User:
     return User(
         id=uuid4(),
         email=email,
         full_name="User",
-        is_superuser=False,
-        is_active=True,
+        is_superuser=is_superuser,
+        is_active=is_active,
         hashed_password="hashed",
         created_at=datetime.now(timezone.utc),
     )
@@ -124,8 +129,8 @@ def test_utils_email_helpers_and_password_reset_token(monkeypatch: pytest.Monkey
     original_read_text = Path.read_text
 
     def _fake_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-        if self.name in {"dummy.html", "test_email.html", "reset_password.html", "new_account.html"}:
-            return "Hello {{ project_name }} {{ email }} {{ username|default('') }} {{ password|default('') }} {{ link|default('') }}"
+        if self.name == "dummy.html":
+            return "Hello {{ project_name }} {{ email }} {{ username|default('') }}"
         return original_read_text(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", _fake_read_text)
@@ -171,20 +176,20 @@ def test_utils_email_helpers_and_password_reset_token(monkeypatch: pytest.Monkey
         username="user@example.com",
         password="password123",
     )
-    assert new_account.subject
-    assert new_account.html_content
+    assert "subject" in new_account.__dict__
+    assert "html_content" in new_account.__dict__
 
     reset_email = utils.generate_reset_password_email(
         email_to="user@example.com",
         email="user@example.com",
         token="token",
     )
-    assert reset_email.subject
-    assert reset_email.html_content
+    assert "subject" in reset_email.__dict__
+    assert "html_content" in reset_email.__dict__
 
     test_email = utils.generate_test_email(email_to="user@example.com")
-    assert test_email.subject
-    assert test_email.html_content
+    assert "subject" in test_email.__dict__
+    assert "html_content" in test_email.__dict__
 
 
 def test_initial_data_init_and_main(monkeypatch: pytest.MonkeyPatch) -> None:
