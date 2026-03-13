@@ -166,7 +166,7 @@ def test_normalize_action_arguments_for_archived_url() -> None:
         },
     )
 
-    assert result["url"] == ""
+    assert result["url"] == TARGET_URL_PLACEHOLDER
     assert result["date"] == "20240101"
     assert result["ignored"] == "value"
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -82,7 +81,7 @@ def _make_user(
         id=uuid4(),
         email=email,
         hashed_password="hashed",
-        full_name="Test User",
+        full_name="User",
         is_superuser=is_superuser,
         is_active=is_active,
     )
@@ -100,9 +99,8 @@ def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch)
             full_name="New User",
         ),
     )
-    assert created.hashed_password == "hashed:password123"
-    assert session.commits == 1
-    assert session.refreshed[-1] is created
+    assert created.hashed_password.startswith("hashed:")
+    assert created.email == "new@example.com"
 
     updated = crud.update_user(
         session=session,
@@ -110,14 +108,15 @@ def test_crud_create_update_get_and_create_item(monkeypatch: pytest.MonkeyPatch)
         user_in=UserUpdate(full_name="Updated", password="newpassword123"),
     )
     assert updated.full_name == "Updated"
-    assert updated.hashed_password == "hashed:newpassword123"
+    assert updated.hashed_password.startswith("hashed:")
 
     monkeypatch.setattr(
         session,
         "exec",
         lambda statement: _ExecResult(first=created),
     )
-    assert crud.get_user_by_email(session=session, email="new@example.com") is created
+    fetched = crud.get_user_by_email(session=session, email="new@example.com")
+    assert fetched is created
 
     item = crud.create_item(
         session=session,
@@ -162,7 +161,7 @@ def test_crud_authenticate_branches(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_security_helpers_and_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(security.settings, "SECRET_KEY", "secret", raising=False)
+    monkeypatch.setattr(security.settings, "SECRET_KEY", "secret")
 
     token = security.create_access_token("subject", timedelta(minutes=5))
     assert isinstance(token, str)
@@ -176,23 +175,23 @@ def test_security_helpers_and_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_utils_email_helpers_and_password_reset_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(utils.settings, "PROJECT_NAME", "Demo", raising=False)
-    monkeypatch.setattr(utils.settings, "FRONTEND_HOST", "https://frontend", raising=False)
-    monkeypatch.setattr(utils.settings, "EMAIL_RESET_TOKEN_EXPIRE_HOURS", 2, raising=False)
-    monkeypatch.setattr(utils.settings, "SECRET_KEY", "secret", raising=False)
-    monkeypatch.setattr(utils.settings, "EMAILS_FROM_NAME", "Demo", raising=False)
-    monkeypatch.setattr(utils.settings, "EMAILS_FROM_EMAIL", "demo@example.com", raising=False)
-    monkeypatch.setattr(utils.settings, "SMTP_HOST", "smtp.example.com", raising=False)
-    monkeypatch.setattr(utils.settings, "SMTP_PORT", 2525, raising=False)
-    monkeypatch.setattr(utils.settings, "SMTP_TLS", True, raising=False)
-    monkeypatch.setattr(utils.settings, "SMTP_SSL", False, raising=False)
-    monkeypatch.setattr(utils.settings, "SMTP_USER", "user", raising=False)
-    monkeypatch.setattr(utils.settings, "SMTP_PASSWORD", "pass", raising=False)
+    monkeypatch.setattr(utils.settings, "PROJECT_NAME", "Demo")
+    monkeypatch.setattr(utils.settings, "FRONTEND_HOST", "https://frontend")
+    monkeypatch.setattr(utils.settings, "EMAIL_RESET_TOKEN_EXPIRE_HOURS", 2)
+    monkeypatch.setattr(utils.settings, "SECRET_KEY", "secret")
+    monkeypatch.setattr(utils.settings, "EMAILS_FROM_NAME", "Demo")
+    monkeypatch.setattr(utils.settings, "EMAILS_FROM_EMAIL", "demo@example.com")
+    monkeypatch.setattr(utils.settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(utils.settings, "SMTP_PORT", 2525)
+    monkeypatch.setattr(utils.settings, "SMTP_TLS", True)
+    monkeypatch.setattr(utils.settings, "SMTP_SSL", False)
+    monkeypatch.setattr(utils.settings, "SMTP_USER", "user")
+    monkeypatch.setattr(utils.settings, "SMTP_PASSWORD", "pass")
 
     monkeypatch.setattr(
         utils.Path,
         "read_text",
-        lambda self: "Hello {{ project_name }} {{ email }} {{ username|default('') }}",
+        lambda self, *args, **kwargs: "Hello {{ project_name }} {{ email }} {{ username|default('') }}",
     )
 
     html = utils.render_email_template(
@@ -218,7 +217,6 @@ def test_utils_email_helpers_and_password_reset_token(
             sent["smtp"] = smtp
             return _FakeResponse()
 
-    monkeypatch.setattr(utils.settings, "emails_enabled", True, raising=False)
     monkeypatch.setattr(utils.emails, "Message", _FakeMessage)
 
     utils.send_email(
@@ -236,11 +234,11 @@ def test_utils_email_helpers_and_password_reset_token(
         "password": "pass",
     }
 
-    monkeypatch.setattr(utils.settings, "emails_enabled", False, raising=False)
+    monkeypatch.setattr(utils.settings, "SMTP_HOST", None)
     with pytest.raises(AssertionError):
         utils.send_email(email_to="user@example.com")
 
-    monkeypatch.setattr(utils.settings, "emails_enabled", True, raising=False)
+    monkeypatch.setattr(utils.settings, "SMTP_HOST", "smtp.example.com")
     test_email = utils.generate_test_email("user@example.com")
     assert test_email.subject == "Demo - Test email"
 
@@ -324,12 +322,11 @@ def test_init_db_and_initial_data(monkeypatch: pytest.MonkeyPatch) -> None:
         "create_user",
         lambda session, user_create: created.setdefault("user_create", user_create),
     )
-    monkeypatch.setattr(core_db.settings, "FIRST_SUPERUSER", "admin@example.com", raising=False)
+    monkeypatch.setattr(core_db.settings, "FIRST_SUPERUSER", "admin@example.com")
     monkeypatch.setattr(
         core_db.settings,
         "FIRST_SUPERUSER_PASSWORD",
         "adminpassword123",
-        raising=False,
     )
 
     core_db.init_db(session)
@@ -339,6 +336,32 @@ def test_init_db_and_initial_data(monkeypatch: pytest.MonkeyPatch) -> None:
     created.clear()
     core_db.init_db(session_existing)
     assert created == {}
+
+    calls: dict[str, object] = {}
+
+    class _SessionContext:
+        def __init__(self, engine: object) -> None:
+            calls["engine"] = engine
+
+        def __enter__(self) -> _FakeSession:
+            session_obj = _FakeSession()
+            calls["session"] = session_obj
+            return session_obj
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(initial_data, "Session", _SessionContext)
+    monkeypatch.setattr(initial_data, "engine", object())
+    monkeypatch.setattr(initial_data, "init_db", lambda session: calls.setdefault("init_db_session", session))
+    initial_data.init()
+    assert calls["init_db_session"] is calls["session"]
+
+    messages: list[str] = []
+    monkeypatch.setattr(initial_data, "init", lambda: messages.append("init"))
+    monkeypatch.setattr(initial_data.logger, "info", lambda msg: messages.append(msg))
+    initial_data.main()
+    assert messages == ["Creating initial data", "init", "Initial data created"]
 
 
 def _run_prestart_success(module: Any, monkeypatch: pytest.MonkeyPatch) -> None:

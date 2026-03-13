@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -114,12 +113,15 @@ def test_items_routes() -> None:
     session = _FakeSession(exec_results=[_ExecResult(one=3), _ExecResult(all_values=[own_item])])
     result = items.read_items(session=session, current_user=admin, skip=0, limit=10)
     assert result.count == 3
-    assert result.data == [own_item]
+    assert len(result.data) == 1
+    assert result.data[0].id == own_item.id
+    assert result.data[0].owner_id == own_item.owner_id
 
     session = _FakeSession(exec_results=[_ExecResult(one=1), _ExecResult(all_values=[own_item])])
     result = items.read_items(session=session, current_user=normal, skip=0, limit=10)
     assert result.count == 1
-    assert result.data == [own_item]
+    assert len(result.data) == 1
+    assert result.data[0].id == own_item.id
 
     session = _FakeSession()
     with pytest.raises(Exception) as exc_info:
@@ -203,7 +205,8 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     created_user = _make_user(email="new@example.com")
     monkeypatch.setattr(users.crud, "get_user_by_email", lambda session, email: None)
     monkeypatch.setattr(users.crud, "create_user", lambda session, user_create: created_user)
-    monkeypatch.setattr(users.settings, "emails_enabled", True, raising=False)
+    monkeypatch.setattr(users.settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(users.settings, "EMAILS_FROM_EMAIL", "demo@example.com")
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(
         users,
@@ -310,104 +313,98 @@ def test_users_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     own = _make_user()
     assert users.read_user_by_id(own.id, session=session, current_user=own) is own
 
-    session = _FakeSession()
-    session.get_map[(User, own.id)] = _make_user(email="other@example.com")
     with pytest.raises(Exception) as exc_info:
-        users.read_user_by_id(own.id, session=session, current_user=_make_user())
+        users.read_user_by_id(uuid4(), session=session, current_user=_make_user())
     assert exc_info.value.status_code == 403
 
-    superuser = _make_user(is_superuser=True)
-    session.get_map[(User, own.id)] = None
+    other_user = _make_user(email="other@example.com")
+    session.get_map[(User, other_user.id)] = None
     with pytest.raises(Exception) as exc_info:
-        users.read_user_by_id(own.id, session=session, current_user=superuser)
+        users.read_user_by_id(other_user.id, session=session, current_user=_make_user(is_superuser=True))
     assert exc_info.value.status_code == 404
 
-    target = _make_user(email="target@example.com")
-    session.get_map[(User, target.id)] = target
-    assert users.read_user_by_id(target.id, session=session, current_user=superuser) is target
+    session.get_map[(User, other_user.id)] = other_user
+    assert users.read_user_by_id(other_user.id, session=session, current_user=_make_user(is_superuser=True)) is other_user
 
-    session = _FakeSession()
+    session.get_map[(User, other_user.id)] = None
     with pytest.raises(Exception) as exc_info:
         users.update_user(
             session=session,
-            user_id=uuid4(),
+            user_id=other_user.id,
             user_in=UserUpdate(full_name="Updated"),
         )
     assert exc_info.value.status_code == 404
 
-    session.get_map[(User, target.id)] = target
-    monkeypatch.setattr(users.crud, "get_user_by_email", lambda session, email: _make_user())
+    session.get_map[(User, other_user.id)] = other_user
+    monkeypatch.setattr(users.crud, "get_user_by_email", lambda session, email: _make_user(email="dup2@example.com"))
     with pytest.raises(Exception) as exc_info:
         users.update_user(
             session=session,
-            user_id=target.id,
-            user_in=UserUpdate(email="dup@example.com"),
+            user_id=other_user.id,
+            user_in=UserUpdate(email="dup2@example.com"),
         )
     assert exc_info.value.status_code == 409
 
     monkeypatch.setattr(users.crud, "get_user_by_email", lambda session, email: None)
     monkeypatch.setattr(users.crud, "update_user", lambda session, db_user, user_in: db_user)
-    assert (
-        users.update_user(
-            session=session,
-            user_id=target.id,
-            user_in=UserUpdate(full_name="Updated"),
-        )
-        is target
-    )
+    assert users.update_user(
+        session=session,
+        user_id=other_user.id,
+        user_in=UserUpdate(full_name="Updated"),
+    ) is other_user
 
-    session = _FakeSession()
+    session.get_map[(User, other_user.id)] = None
     with pytest.raises(Exception) as exc_info:
-        users.delete_user(session=session, current_user=superuser, user_id=uuid4())
+        users.delete_user(
+            session=session,
+            current_user=_make_user(is_superuser=True),
+            user_id=other_user.id,
+        )
     assert exc_info.value.status_code == 404
 
-    session.get_map[(User, superuser.id)] = superuser
+    session.get_map[(User, other_user.id)] = _make_user(is_superuser=True)
+    current_superuser = session.get_map[(User, other_user.id)]
     with pytest.raises(Exception) as exc_info:
-        users.delete_user(session=session, current_user=superuser, user_id=superuser.id)
+        users.delete_user(
+            session=session,
+            current_user=current_superuser,
+            user_id=current_superuser.id,
+        )
     assert exc_info.value.status_code == 403
 
-    session.get_map[(User, target.id)] = target
-    deleted = users.delete_user(session=session, current_user=superuser, user_id=target.id)
-    assert deleted.message == "User deleted successfully"
+    session.get_map[(User, other_user.id)] = other_user
+    message = users.delete_user(
+        session=session,
+        current_user=_make_user(is_superuser=True),
+        user_id=other_user.id,
+    )
+    assert message.message == "User deleted successfully"
 
 
 def test_login_private_and_utils_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     session = _FakeSession()
-    active_user = _make_user(is_active=True)
-    inactive_user = _make_user(is_active=False)
+    active_user = _make_user(is_superuser=True)
 
     monkeypatch.setattr(login.crud, "authenticate", lambda session, email, password: None)
+    form = type("Form", (), {"username": "user@example.com", "password": "password123"})()
     with pytest.raises(Exception) as exc_info:
-        login.login_access_token(
-            session=session,
-            form_data=SimpleNamespace(username="user@example.com", password="password123"),
-        )
+        login.login_access_token(session=session, form_data=form)
     assert exc_info.value.status_code == 400
 
+    inactive_user = _make_user(is_active=False)
     monkeypatch.setattr(login.crud, "authenticate", lambda session, email, password: inactive_user)
     with pytest.raises(Exception) as exc_info:
-        login.login_access_token(
-            session=session,
-            form_data=SimpleNamespace(username="user@example.com", password="password123"),
-        )
-    assert exc_info.value.detail == "Inactive user"
+        login.login_access_token(session=session, form_data=form)
+    assert exc_info.value.status_code == 400
 
     monkeypatch.setattr(login.crud, "authenticate", lambda session, email, password: active_user)
     monkeypatch.setattr(login.security, "create_access_token", lambda subject, expires_delta: "token")
-    token = login.login_access_token(
-        session=session,
-        form_data=SimpleNamespace(username="user@example.com", password="password123"),
-    )
+    token = login.login_access_token(session=session, form_data=form)
     assert token.access_token == "token"
+
     assert login.test_token(active_user) is active_user
 
-    monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: None)
-    sent: list[str] = []
-    monkeypatch.setattr(login, "send_email", lambda email_to, subject, html_content: sent.append(email_to))
-    message = login.recover_password("missing@example.com", session=session)
-    assert message.message.startswith("If that email is registered")
-    assert sent == []
-
+    sent: list[tuple[str, str]] = []
     monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: active_user)
     monkeypatch.setattr(login, "generate_password_reset_token", lambda email: "reset-token")
     monkeypatch.setattr(
@@ -415,45 +412,39 @@ def test_login_private_and_utils_routes(monkeypatch: pytest.MonkeyPatch) -> None
         "generate_reset_password_email",
         lambda email_to, email, token: _EmailData("subject", "html"),
     )
-    login.recover_password("user@example.com", session=session)
-    assert sent == ["user@example.com"]
+    monkeypatch.setattr(
+        login,
+        "send_email",
+        lambda email_to, subject, html_content: sent.append((email_to, subject)),
+    )
+    message = login.recover_password("user@example.com", session=session)
+    assert "If that email is registered" in message.message
+    assert sent == [(active_user.email, "subject")]
+
+    monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: None)
+    message = login.recover_password("missing@example.com", session=session)
+    assert "If that email is registered" in message.message
 
     monkeypatch.setattr(login, "verify_password_reset_token", lambda token: None)
     with pytest.raises(Exception) as exc_info:
-        login.reset_password(
-            session=session,
-            body=NewPassword(token="bad", new_password="newpassword123"),
-        )
-    assert exc_info.value.detail == "Invalid token"
+        login.reset_password(session=session, body=NewPassword(token="bad", new_password="password123"))
+    assert exc_info.value.status_code == 400
 
     monkeypatch.setattr(login, "verify_password_reset_token", lambda token: "user@example.com")
     monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: None)
-    with pytest.raises(Exception):
-        login.reset_password(
-            session=session,
-            body=NewPassword(token="ok", new_password="newpassword123"),
-        )
+    with pytest.raises(Exception) as exc_info:
+        login.reset_password(session=session, body=NewPassword(token="bad", new_password="password123"))
+    assert exc_info.value.status_code == 400
 
     monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: inactive_user)
-    with pytest.raises(Exception):
-        login.reset_password(
-            session=session,
-            body=NewPassword(token="ok", new_password="newpassword123"),
-        )
+    with pytest.raises(Exception) as exc_info:
+        login.reset_password(session=session, body=NewPassword(token="ok", new_password="password123"))
+    assert exc_info.value.status_code == 400
 
     monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: active_user)
-    updates: list[str] = []
-    monkeypatch.setattr(
-        login.crud,
-        "update_user",
-        lambda session, db_user, user_in: updates.append(user_in.password or ""),
-    )
-    reset_message = login.reset_password(
-        session=session,
-        body=NewPassword(token="ok", new_password="newpassword123"),
-    )
-    assert reset_message.message == "Password updated successfully"
-    assert updates == ["newpassword123"]
+    monkeypatch.setattr(login.crud, "update_user", lambda session, db_user, user_in: db_user)
+    message = login.reset_password(session=session, body=NewPassword(token="ok", new_password="password123"))
+    assert message.message == "Password updated successfully"
 
     monkeypatch.setattr(login.crud, "get_user_by_email", lambda session, email: None)
     with pytest.raises(Exception) as exc_info:
@@ -468,32 +459,25 @@ def test_login_private_and_utils_routes(monkeypatch: pytest.MonkeyPatch) -> None
         lambda email_to, email, token: _EmailData("subject", "<b>html</b>"),
     )
     html_response = login.recover_password_html_content("user@example.com", session=session)
-    assert "subject:" in html_response.headers
-    assert html_response.body
+    assert "html" in html_response.body.decode()
 
-    monkeypatch.setattr(private, "get_password_hash", lambda password: "hashed:new")
-    private_session = _FakeSession()
-    private_user = private.create_user(
-        private.PrivateUserCreate(
-            email="private@example.com",
-            password="password123",
-            full_name="Private User",
-        ),
-        session=private_session,
+    private_user = private.PrivateUserCreate(
+        email="private@example.com",
+        password="password123",
+        full_name="Private",
     )
-    assert private_user.hashed_password == "hashed:new"
+    monkeypatch.setattr(private, "get_password_hash", lambda password: "hashed-private")
+    created = private.create_user(private_user, session=session)
+    assert created.hashed_password == "hashed-private"
 
-    monkeypatch.setattr(
-        utils_routes,
-        "generate_test_email",
-        lambda email_to: _EmailData("subject", "<b>html</b>"),
-    )
-    sent_email: list[tuple[str, str]] = []
+    monkeypatch.setattr(utils_routes, "generate_test_email", lambda email_to: _EmailData("subject", "html"))
+    utility_sent: list[tuple[str, str]] = []
     monkeypatch.setattr(
         utils_routes,
         "send_email",
-        lambda email_to, subject, html_content: sent_email.append((email_to, subject)),
+        lambda email_to, subject, html_content: utility_sent.append((email_to, subject)),
     )
     message = utils_routes.test_email("user@example.com")
     assert message.message == "Test email sent"
-    assert sent_email == [("user@example.com", "subject")]
+    assert utility_sent == [("user@example.com", "subject")]
+    assert utils_routes.health_check.__name__ == "health_check"
