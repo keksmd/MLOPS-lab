@@ -7,7 +7,11 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.metrics.schemas import EvaluationSample
+    from app.planning.service import PlanningService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,20 +24,15 @@ logger = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
 
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
-from app.metrics.config import MetricsConfig, OpenRouterConfig
-from app.metrics.evaluator import MetricsEvaluator
-from app.metrics.llm.openrouter_client import OpenRouterLLMClient
-from app.metrics.schemas import EvaluationSample
-from app.planning.config import PlanningConfig
-from app.planning.data.loaders import FewShotDatasetLoader, ToolRegistryLoader
-from app.planning.few_shot import FewShotSelector
-from app.planning.service import PlanningService
-
 DEFAULT_OPENROUTER_MODEL = "arcee-ai/trinity-large-preview:free"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _ensure_backend_on_path() -> None:
+    """Ensure backend directory is importable as a top-level package root."""
+    backend_dir_str = str(BACKEND_DIR)
+    if backend_dir_str not in sys.path:
+        sys.path.insert(0, backend_dir_str)
 
 
 def _read_repo_env(repo_root: Path) -> dict[str, str]:
@@ -59,8 +58,7 @@ def _resolve_openrouter_settings(repo_root: Path) -> tuple[str, str, str]:
     api_key = os.getenv("OPENROUTER_API_KEY") or file_env.get("OPENROUTER_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "OPENROUTER_API_KEY is not set. "
-            "Set it in the shell or in repo-root .env."
+            "OPENROUTER_API_KEY is not set. Set it in the shell or in repo-root .env."
         )
 
     model_name = (
@@ -110,7 +108,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--show-prompts",
         action="store_true",
-        help="Print planning prompts for debugging.",
+        help="Include planning prompts in the final report.",
     )
     parser.add_argument(
         "--disable-judge-metrics",
@@ -132,6 +130,9 @@ def _select_target_and_few_shot(
     if few_shot_count < 0:
         raise RuntimeError("--few-shot-count must be >= 0.")
 
+    _ensure_backend_on_path()
+    from app.planning.few_shot import FewShotSelector
+
     rng = random.Random(seed)
     target_index = rng.randrange(len(examples))
     target_example = examples[target_index]
@@ -152,7 +153,139 @@ def _select_target_and_few_shot(
     return target_index, target_example, few_shot_examples
 
 
+def _build_evaluation_sample(
+    *,
+    target_index: int,
+    target_example: Any,
+    tools: list[Any],
+    inference_result: Any,
+) -> EvaluationSample:
+    """Build EvaluationSample lazily to avoid module-level project imports."""
+    _ensure_backend_on_path()
+    from app.metrics.schemas import EvaluationSample
+
+    return EvaluationSample(
+        sample_id=f"random-sample-{target_index}",
+        task=target_example.task,
+        available_tools=tools,
+        prediction=inference_result.prediction,
+        golden=target_example.output,
+        raw_prediction=(
+            inference_result.raw_response
+            or inference_result.prediction.model_dump_json(indent=2)
+        ),
+    )
+
+
+def _render_report(
+    *,
+    target_index: int,
+    target_example: Any,
+    few_shot_examples: list[Any],
+    model_name: str,
+    show_prompts: bool,
+    inference_result: Any,
+    metric_result: dict[str, Any],
+) -> str:
+    """Render a readable multi-section report for local inspection."""
+    lines: list[str] = []
+
+    lines.append("=" * 100)
+    lines.append("TARGET SAMPLE")
+    lines.append(f"index: {target_index}")
+    lines.append(f"task: {target_example.task}")
+
+    lines.append("=" * 100)
+    lines.append("FEW-SHOT")
+    lines.append(f"count: {len(few_shot_examples)}")
+    for idx, example in enumerate(few_shot_examples, start=1):
+        lines.append(f"  {idx}. {example.task}")
+
+    lines.append("=" * 100)
+    lines.append("MODEL")
+    lines.append(model_name)
+
+    if show_prompts and inference_result.prompt_artifacts is not None:
+        lines.append("=" * 100)
+        lines.append("PLANNING SYSTEM PROMPT")
+        lines.append(inference_result.prompt_artifacts.system_prompt)
+        lines.append("=" * 100)
+        lines.append("PLANNING USER PROMPT")
+        lines.append(inference_result.prompt_artifacts.user_prompt)
+
+    lines.append("=" * 100)
+    lines.append("PREDICTION")
+    lines.append(
+        json.dumps(
+            inference_result.prediction.model_dump(),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+    lines.append("=" * 100)
+    lines.append("GOLD")
+    lines.append(
+        json.dumps(
+            target_example.output.model_dump(),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+    lines.append("=" * 100)
+    lines.append("METRICS")
+    lines.append(json.dumps(metric_result, ensure_ascii=False, indent=2))
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_planning_service(
+    *,
+    api_key: str,
+    model_name: str,
+    base_url: str,
+    show_prompts: bool,
+) -> PlanningService:
+    """Create project planning service with OpenRouter-backed client."""
+    _ensure_backend_on_path()
+    from app.metrics.config import OpenRouterConfig
+    from app.metrics.llm.openrouter_client import OpenRouterLLMClient
+    from app.planning.config import PlanningConfig
+    from app.planning.service import PlanningService
+
+    llm_client = OpenRouterLLMClient(
+        OpenRouterConfig(
+            api_key=api_key,
+            model_name=model_name,
+            base_url=base_url,
+            max_retries=0,
+            retry_backoff_seconds=0.0,
+            timeout_seconds=20,
+            temperature=0.0,
+            max_tokens=1200,
+        )
+    )
+    logger.info("OpenRouter client initialized")
+
+    planning_service = PlanningService(
+        llm_client=llm_client,
+        config=PlanningConfig(
+            default_model_name=model_name,
+            include_prompt_debug=show_prompts,
+            include_raw_response=True,
+        ),
+    )
+    logger.info("Planning service initialized")
+    return planning_service
+
+
 def main() -> None:
+    _ensure_backend_on_path()
+    from app.metrics.config import MetricsConfig
+    from app.metrics.evaluator import MetricsEvaluator
+    from app.planning.data.loaders import FewShotDatasetLoader, ToolRegistryLoader
+
     parser = _build_arg_parser()
     args = parser.parse_args()
 
@@ -185,29 +318,12 @@ def main() -> None:
     logger.info("Selected target index: %d", target_index)
     logger.info("Selected %d few-shot examples", len(few_shot_examples))
 
-    llm_client = OpenRouterLLMClient(
-        OpenRouterConfig(
-            api_key=api_key,
-            model_name=model_name,
-            base_url=base_url,
-            max_retries=0,
-            retry_backoff_seconds=0.0,
-            timeout_seconds=20,
-            temperature=0.0,
-            max_tokens=1200,
-        )
+    planning_service = _build_planning_service(
+        api_key=api_key,
+        model_name=model_name,
+        base_url=base_url,
+        show_prompts=args.show_prompts,
     )
-    logger.info("OpenRouter client initialized")
-
-    planning_service = PlanningService(
-        llm_client=llm_client,
-        config=PlanningConfig(
-            default_model_name=model_name,
-            include_prompt_debug=args.show_prompts,
-            include_raw_response=True,
-        ),
-    )
-    logger.info("Planning service initialized")
 
     logger.info("Running planning inference")
     inference_result = planning_service.predict_from_parts(
@@ -218,16 +334,11 @@ def main() -> None:
     )
     logger.info("Planning inference completed")
 
-    sample = EvaluationSample(
-        sample_id=f"random-sample-{target_index}",
-        task=target_example.task,
-        available_tools=tools,
-        prediction=inference_result.prediction,
-        golden=target_example.output,
-        raw_prediction=(
-            inference_result.raw_response
-            or inference_result.prediction.model_dump_json(indent=2)
-        ),
+    sample = _build_evaluation_sample(
+        target_index=target_index,
+        target_example=target_example,
+        tools=tools,
+        inference_result=inference_result,
     )
 
     enable_judge_metrics = not args.disable_judge_metrics
@@ -236,7 +347,7 @@ def main() -> None:
             enable_judge_metrics=enable_judge_metrics,
             enable_semantic_similarity=False,
         ),
-        llm_client=llm_client if enable_judge_metrics else None,
+        llm_client=planning_service.llm_client if enable_judge_metrics else None,
     )
     logger.info("Metrics evaluator initialized (judge=%s)", enable_judge_metrics)
 
@@ -244,52 +355,16 @@ def main() -> None:
     metric_result = evaluator.evaluate_sample(sample)
     logger.info("Metrics evaluation completed")
 
-    print("=" * 100)
-    print("TARGET SAMPLE")
-    print(f"index: {target_index}")
-    print(f"task: {target_example.task}")
-
-    print("=" * 100)
-    print("FEW-SHOT")
-    print(f"count: {len(few_shot_examples)}")
-    for idx, example in enumerate(few_shot_examples, start=1):
-        print(f"  {idx}. {example.task}")
-
-    print("=" * 100)
-    print("MODEL")
-    print(model_name)
-
-    if args.show_prompts and inference_result.prompt_artifacts is not None:
-        print("=" * 100)
-        print("PLANNING SYSTEM PROMPT")
-        print(inference_result.prompt_artifacts.system_prompt)
-        print("=" * 100)
-        print("PLANNING USER PROMPT")
-        print(inference_result.prompt_artifacts.user_prompt)
-
-    print("=" * 100)
-    print("PREDICTION")
-    print(
-        json.dumps(
-            inference_result.prediction.model_dump(),
-            ensure_ascii=False,
-            indent=2,
-        )
+    report = _render_report(
+        target_index=target_index,
+        target_example=target_example,
+        few_shot_examples=few_shot_examples,
+        model_name=model_name,
+        show_prompts=args.show_prompts,
+        inference_result=inference_result,
+        metric_result=metric_result,
     )
-
-    print("=" * 100)
-    print("GOLD")
-    print(
-        json.dumps(
-            target_example.output.model_dump(),
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-
-    print("=" * 100)
-    print("METRICS")
-    print(json.dumps(metric_result, ensure_ascii=False, indent=2))
+    sys.stdout.write(report)
 
 
 if __name__ == "__main__":
