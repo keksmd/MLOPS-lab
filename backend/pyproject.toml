@@ -13,15 +13,14 @@ dependencies = [
     "jinja2<4.0.0,>=3.1.4",
     "alembic<2.0.0,>=1.12.1",
     "httpx<1.0.0,>=0.25.1",
+    "langchain-core>=0.3.0,<1.0.0",
+    "langchain-openai>=0.3.0,<1.0.0",
     "psycopg[binary]<4.0.0,>=3.1.13",
     "sqlmodel<1.0.0,>=0.0.21",
     "pydantic-settings<3.0.0,>=2.2.1",
     "sentry-sdk[fastapi]>=2.0.0,<3.0.0",
     "pyjwt<3.0.0,>=2.8.0",
     "pwdlib[argon2,bcrypt]>=0.3.0",
-    "pandas>=2.2.0,<3.0.0",
-    "langchain-core>=1.2.13,<2.0.0",
-    "langchain-openrouter<1.0.0,>=0.1.0",
 ]
 
 [dependency-groups]
@@ -31,7 +30,6 @@ dev = [
     "ruff<1.0.0,>=0.2.2",
     "prek>=0.2.24,<1.0.0",
     "coverage<8.0.0,>=7.4.3",
-    "pandas-stubs>=2.2.0.240218,<3.0.0",
 ]
 
 [build-system]
@@ -40,8 +38,6 @@ build-backend = "hatchling.build"
 
 [tool.mypy]
 strict = true
-plugins = ["pydantic.mypy"]
-mypy_path = ["backend"]
 exclude = ["venv", ".venv", "alembic"]
 
 [tool.ruff]
@@ -50,21 +46,21 @@ exclude = ["alembic"]
 
 [tool.ruff.lint]
 select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
     "ARG001", # unused arguments in functions
     "T201",   # print statements are not allowed
 ]
 ignore = [
-    "E501",  # line too long, handled by black
-    "B008",  # do not perform function calls in argument defaults
-    "W191",  # indentation contains tabs
-    "B904",  # Allow raising exceptions without from e, for HTTPException
+    "E501", # line too long, handled by black
+    "B008", # do not perform function calls in argument defaults
+    "W191", # indentation contains tabs
+    "B904", # Allow raising exceptions without from e, for HTTPException
 ]
 
 [tool.ruff.lint.pyupgrade]
