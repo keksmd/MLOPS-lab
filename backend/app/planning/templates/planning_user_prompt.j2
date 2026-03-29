@@ -1,15 +1,13 @@
 {% if few_shot_examples %}
 Here are few-shot examples:
 {% for example in few_shot_examples %}
-Example {{ loop.index }} — Task:
+Example {{ example["example_index"] }}
+Task:
 {{ example["task"] }}
-
-Example {{ loop.index }} — Output:
+Example {{ example["example_index"] }} Output:
 {{ example["output_json"] }}
-
 {% endfor %}
 {% endif %}
 Task:
 {{ task }}
-
 Return only the planner output.
