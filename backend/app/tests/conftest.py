@@ -223,6 +223,7 @@ def tmp_json_artifacts(
         "tools": tools_path,
     }
 
+
 _REQUIRED_TEST_ENV = {
     "PROJECT_NAME": "test-project",
     "POSTGRES_SERVER": "localhost",
