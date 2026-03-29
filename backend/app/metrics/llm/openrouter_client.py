@@ -4,7 +4,7 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openrouter import ChatOpenRouter
+from langchain_openai import ChatOpenAI
 from pydantic import RootModel, SecretStr
 
 from ..config import OpenRouterConfig
@@ -28,9 +28,18 @@ class OpenRouterLLMClient(BaseLLMClient):
                 ("human", "{user_prompt}"),
             ]
         )
-        self._chat_model = ChatOpenRouter(
+
+        default_headers: dict[str, str] = {}
+        if config.http_referer:
+            default_headers["HTTP-Referer"] = config.http_referer
+        if config.app_title:
+            default_headers["X-Title"] = config.app_title
+
+        self._chat_model = ChatOpenAI(
             model=config.model_name,
             api_key=SecretStr(config.api_key),
+            base_url=config.base_url,
+            default_headers=default_headers or None,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             max_retries=config.max_retries,

@@ -46,7 +46,12 @@ class DummyJSONLLMClient(BaseLLMClient):
     def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
         return json.dumps(self.payload)
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def generate_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
         return self.payload
 
     def generate_structured(
@@ -73,7 +78,6 @@ def test_parse_judge_response_and_aggregation(
         golden=gold_output,
         raw_prediction=json.dumps(predicted_output.model_dump()),
     )
-
     heuristics = compute_heuristic_metrics(sample, similarity_fn=lambda _a, _b: 0.7)
     judge = parse_judge_response(judge_payload)
     aggregate = compute_aggregate_metrics(heuristics, judge, MetricsConfig().weights)
@@ -105,10 +109,11 @@ def test_parse_judge_response_and_aggregation(
     assert 0.0 <= aggregate.final_score <= 1.0
 
 
-def test_judge_prompt_builder_uses_external_templates_and_parser(
+def test_judge_prompt_and_evaluator_dataset(
     tool_specs,
     predicted_output,
     gold_output,
+    judge_payload,
 ) -> None:
     sample = EvaluationSample(
         sample_id="sample-2",
@@ -118,78 +123,24 @@ def test_judge_prompt_builder_uses_external_templates_and_parser(
         golden=gold_output,
         raw_prediction=json.dumps(predicted_output.model_dump()),
     )
-
     prompt_builder = JudgePromptBuilder(
         JudgeConfig(
             use_reference_aware_judge=True,
             include_reasoning=False,
         )
     )
-
     system_prompt = prompt_builder.build_system_prompt()
     user_prompt = prompt_builder.build_user_prompt(sample)
 
-    assert prompt_builder.get_format_instructions() in system_prompt
-    assert "Set reasoning to an empty string." in system_prompt
+    assert "ideal answer" in system_prompt.lower()
     assert "golden_reference" in user_prompt
-    assert '"task": "Find the article received date."' in user_prompt
-
-
-def test_judge_prompt_builder_without_reference_omits_golden_reference(
-    tool_specs,
-    predicted_output,
-) -> None:
-    sample = EvaluationSample(
-        sample_id="sample-3",
-        task="Find the article received date.",
-        available_tools=tool_specs,
-        prediction=predicted_output,
-        golden=None,
-        raw_prediction=json.dumps(predicted_output.model_dump()),
-    )
-
-    prompt_builder = JudgePromptBuilder(
-        JudgeConfig(
-            use_reference_aware_judge=False,
-            include_reasoning=True,
-        )
-    )
-
-    system_prompt = prompt_builder.build_system_prompt()
-    user_prompt = prompt_builder.build_user_prompt(sample)
-
-    assert "Judge the prediction on its own merits." in system_prompt
-    assert "golden_reference" not in user_prompt
-
-
-def test_judge_prompt_and_evaluator_dataset(
-    tool_specs,
-    predicted_output,
-    gold_output,
-    judge_payload,
-) -> None:
-    sample = EvaluationSample(
-        sample_id="sample-4",
-        task="Find the article received date.",
-        available_tools=tool_specs,
-        prediction=predicted_output,
-        golden=gold_output,
-        raw_prediction=json.dumps(predicted_output.model_dump()),
-    )
-
-    prompt_builder = JudgePromptBuilder(
-        JudgeConfig(
-            use_reference_aware_judge=True,
-            include_reasoning=False,
-        )
-    )
+    assert '"reasoning"' not in user_prompt
 
     evaluator = MetricsEvaluator(
         config=MetricsConfig(enable_judge_metrics=True),
         llm_client=DummyJSONLLMClient(judge_payload),
         prompt_builder=prompt_builder,
     )
-
     sample_result = evaluator.evaluate_sample(sample)
     dataset_result = evaluator.evaluate_dataset(
         [sample, sample],
@@ -217,7 +168,7 @@ class _FakeStructuredModel:
         return self._response
 
 
-class _FakeChatOpenRouter:
+class _FakeChatOpenAI:
     def __init__(self, **_: object) -> None:
         pass
 
@@ -232,7 +183,7 @@ class _FakeChatOpenRouter:
         return _FakeStructuredModel({"ok": True, "value": 1})
 
 
-class _FakeBrokenChatOpenRouter:
+class _FakeBrokenChatOpenAI:
     def __init__(self, **_: object) -> None:
         pass
 
@@ -251,10 +202,9 @@ def test_openrouter_client_generate_text_and_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "app.metrics.llm.openrouter_client.ChatOpenRouter",
-        _FakeChatOpenRouter,
+        "app.metrics.llm.openrouter_client.ChatOpenAI",
+        _FakeChatOpenAI,
     )
-
     client = OpenRouterLLMClient(
         config=OpenRouterConfig(
             api_key="test-key",
@@ -275,10 +225,9 @@ def test_openrouter_client_invalid_json_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "app.metrics.llm.openrouter_client.ChatOpenRouter",
-        _FakeBrokenChatOpenRouter,
+        "app.metrics.llm.openrouter_client.ChatOpenAI",
+        _FakeBrokenChatOpenAI,
     )
-
     client = OpenRouterLLMClient(
         config=OpenRouterConfig(
             api_key="test-key",

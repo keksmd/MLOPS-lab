@@ -9,14 +9,15 @@ class OpenRouterConfig(BaseModel):
     api_key: str = Field(..., description="OpenRouter API key.")
     model_name: str = Field(..., description="Model identifier on OpenRouter.")
     base_url: str = Field(
-        default="https://openrouter.ai/api/v1/chat/completions",
-        description="OpenRouter chat completions endpoint.",
+        default="https://openrouter.ai/api/v1",
+        description="OpenRouter OpenAI-compatible API base URL.",
     )
     timeout_seconds: int = Field(120, description="HTTP timeout in seconds.")
     temperature: float = Field(0.0, description="Sampling temperature.")
     max_tokens: int = Field(1200, description="Maximum generation length.")
     max_retries: int = Field(
-        3, description="Maximum number of retries for transient errors."
+        3,
+        description="Maximum number of retries for transient errors.",
     )
     retry_backoff_seconds: float = Field(
         2.0,
@@ -38,8 +39,9 @@ class JudgeConfig(BaseModel):
     use_reference_aware_judge: bool = Field(
         True,
         description=(
-            "Whether the judge receives the golden reference. The gold reference is treated "
-            "as an ideal answer that should receive maximal ratings on every criterion."
+            "Whether the judge receives the golden reference. "
+            "The gold reference is treated as an ideal answer that should "
+            "receive maximal ratings on every criterion."
         ),
     )
     include_reasoning: bool = Field(
@@ -73,5 +75,7 @@ class MetricsConfig(BaseModel):
     )
     enable_semantic_similarity: bool = Field(
         False,
-        description="Whether embedding-based plan semantic similarity should be computed.",
+        description=(
+            "Whether embedding-based plan semantic similarity should be computed."
+        ),
     )

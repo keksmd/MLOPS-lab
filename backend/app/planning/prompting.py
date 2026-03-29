@@ -33,7 +33,6 @@ class PlanningPromptBuilder:
         self._output_parser = PydanticOutputParser(
             pydantic_object=PlannerOutput,
         )
-
         system_prompt = PromptTemplate.from_template(
             _load_template("planning_system_prompt.j2"),
             template_format="jinja2",
@@ -42,7 +41,6 @@ class PlanningPromptBuilder:
             _load_template("planning_user_prompt.j2"),
             template_format="jinja2",
         )
-
         self._system_prompt_template = ChatPromptTemplate.from_messages(
             [SystemMessagePromptTemplate(prompt=system_prompt)]
         )
@@ -64,10 +62,11 @@ class PlanningPromptBuilder:
     @staticmethod
     def _serialize_few_shot_examples(
         request: InferenceRequest,
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, str | int]]:
         """Prepare few-shot examples for template rendering."""
         return [
             {
+                "example_index": index,
                 "task": example.task,
                 "output_json": json.dumps(
                     example.output.model_dump(),
@@ -75,7 +74,7 @@ class PlanningPromptBuilder:
                     indent=2,
                 ),
             }
-            for example in request.few_shot_examples
+            for index, example in enumerate(request.few_shot_examples, start=1)
         ]
 
     def build(self, request: InferenceRequest) -> PromptArtifacts:
