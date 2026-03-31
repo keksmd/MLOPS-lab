@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import random
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from app.metrics.llm.base import BaseLLMClient
     from app.metrics.schemas import EvaluationSample
     from app.planning.service import PlanningService
 
@@ -22,10 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BACKEND_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BACKEND_DIR.parent
-
-DEFAULT_OPENROUTER_MODEL = "arcee-ai/trinity-large-preview:free"
-DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def _ensure_backend_on_path() -> None:
@@ -35,50 +31,11 @@ def _ensure_backend_on_path() -> None:
         sys.path.insert(0, backend_dir_str)
 
 
-def _read_repo_env(repo_root: Path) -> dict[str, str]:
-    """Read simple KEY=VALUE pairs from repo-root .env if it exists."""
-    env_path = repo_root / ".env"
-    if not env_path.exists():
-        return {}
-
-    values: dict[str, str] = {}
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
-def _resolve_openrouter_settings(repo_root: Path) -> tuple[str, str, str]:
-    """Resolve OpenRouter API key, model name, and base URL."""
-    file_env = _read_repo_env(repo_root)
-
-    api_key = os.getenv("OPENROUTER_API_KEY") or file_env.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY is not set. Set it in the shell or in repo-root .env."
-        )
-
-    model_name = (
-        os.getenv("OPENROUTER_MODEL_NAME")
-        or file_env.get("OPENROUTER_MODEL_NAME")
-        or DEFAULT_OPENROUTER_MODEL
-    )
-    base_url = (
-        os.getenv("OPENROUTER_BASE_URL")
-        or file_env.get("OPENROUTER_BASE_URL")
-        or DEFAULT_OPENROUTER_BASE_URL
-    )
-    return api_key, model_name, base_url
-
-
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run one random-sample local smoke test: planning inference via "
-            "OpenRouter + metrics evaluation."
+            "Run one random-sample local smoke test: planning inference via the "
+            "configured LLM provider and optional metrics evaluation."
         )
     )
     parser.add_argument(
@@ -182,7 +139,10 @@ def _render_report(
     target_index: int,
     target_example: Any,
     few_shot_examples: list[Any],
-    model_name: str,
+    planning_provider: str,
+    planning_model_name: str,
+    judge_provider: str | None,
+    judge_model_name: str | None,
     show_prompts: bool,
     inference_result: Any,
     metric_result: dict[str, Any],
@@ -202,8 +162,15 @@ def _render_report(
         lines.append(f"  {idx}. {example.task}")
 
     lines.append("=" * 100)
-    lines.append("MODEL")
-    lines.append(model_name)
+    lines.append("PLANNING MODEL")
+    lines.append(f"provider: {planning_provider}")
+    lines.append(f"model: {planning_model_name}")
+
+    if judge_provider is not None and judge_model_name is not None:
+        lines.append("=" * 100)
+        lines.append("JUDGE MODEL")
+        lines.append(f"provider: {judge_provider}")
+        lines.append(f"model: {judge_model_name}")
 
     if show_prompts and inference_result.prompt_artifacts is not None:
         lines.append("=" * 100)
@@ -242,42 +209,58 @@ def _render_report(
 
 def _build_planning_service(
     *,
-    api_key: str,
-    model_name: str,
-    base_url: str,
     show_prompts: bool,
-) -> PlanningService:
-    """Create project planning service with OpenRouter-backed client."""
+) -> tuple[PlanningService, str, str]:
+    """Create the planning service using the configured provider."""
     _ensure_backend_on_path()
-    from app.metrics.config import OpenRouterConfig
-    from app.metrics.llm.openrouter_client import OpenRouterLLMClient
+    from app.core.config import settings
+    from app.metrics.llm.provider_factory import (
+        build_llm_client,
+        get_default_model_name,
+    )
     from app.planning.config import PlanningConfig
     from app.planning.service import PlanningService
 
-    llm_client = OpenRouterLLMClient(
-        OpenRouterConfig(
-            api_key=api_key,
-            model_name=model_name,
-            base_url=base_url,
-            max_retries=0,
-            retry_backoff_seconds=0.0,
-            timeout_seconds=20,
-            temperature=0.0,
-            max_tokens=1200,
-        )
+    provider = settings.PLANNING_LLM_PROVIDER
+    model_name = get_default_model_name(provider)
+    llm_client = build_llm_client(provider=provider, model_name=model_name)
+    logger.info(
+        "Planning LLM client initialized (provider=%s, model=%s)", provider, model_name
     )
-    logger.info("OpenRouter client initialized")
 
     planning_service = PlanningService(
         llm_client=llm_client,
         config=PlanningConfig(
+            max_few_shot_examples=3,
             default_model_name=model_name,
             include_prompt_debug=show_prompts,
             include_raw_response=True,
+            enforce_placeholder_rules=True,
         ),
     )
     logger.info("Planning service initialized")
-    return planning_service
+    return planning_service, provider, model_name
+
+
+def _build_judge_client(
+    *,
+    planning_provider: str,
+) -> tuple[BaseLLMClient, str, str]:
+    """Create a judge LLM client using the configured provider routing."""
+    _ensure_backend_on_path()
+    from app.metrics.llm.provider_factory import (
+        build_llm_client,
+        get_default_model_name,
+        resolve_judge_provider,
+    )
+
+    provider = resolve_judge_provider(planning_provider)  # type: ignore[arg-type]
+    model_name = get_default_model_name(provider)
+    return (
+        build_llm_client(provider=provider, model_name=model_name),
+        provider,
+        model_name,
+    )
 
 
 def main() -> None:
@@ -289,15 +272,11 @@ def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    logger.info("Starting local smoke test")
+    logger.info("Starting provider-aware local smoke test")
     logger.info("Dataset: %s", args.dataset)
     logger.info("Tools: %s", args.tools)
     logger.info("Seed: %d", args.seed)
     logger.info("Few-shot count: %d", args.few_shot_count)
-
-    api_key, model_name, base_url = _resolve_openrouter_settings(REPO_ROOT)
-    logger.info("Model: %s", model_name)
-    logger.info("Base URL: %s", base_url)
 
     dataset_loader = FewShotDatasetLoader()
     tool_loader = ToolRegistryLoader()
@@ -318,10 +297,7 @@ def main() -> None:
     logger.info("Selected target index: %d", target_index)
     logger.info("Selected %d few-shot examples", len(few_shot_examples))
 
-    planning_service = _build_planning_service(
-        api_key=api_key,
-        model_name=model_name,
-        base_url=base_url,
+    planning_service, planning_provider, planning_model_name = _build_planning_service(
         show_prompts=args.show_prompts,
     )
 
@@ -330,7 +306,7 @@ def main() -> None:
         task=target_example.task,
         available_tools=tools,
         few_shot_examples=few_shot_examples,
-        model_name=model_name,
+        model_name=planning_model_name,
     )
     logger.info("Planning inference completed")
 
@@ -342,12 +318,25 @@ def main() -> None:
     )
 
     enable_judge_metrics = not args.disable_judge_metrics
+    judge_provider: str | None = None
+    judge_model_name: str | None = None
+    judge_client = None
+    if enable_judge_metrics:
+        judge_client, judge_provider, judge_model_name = _build_judge_client(
+            planning_provider=planning_provider,
+        )
+        logger.info(
+            "Judge client initialized (provider=%s, model=%s)",
+            judge_provider,
+            judge_model_name,
+        )
+
     evaluator = MetricsEvaluator(
         config=MetricsConfig(
             enable_judge_metrics=enable_judge_metrics,
             enable_semantic_similarity=False,
         ),
-        llm_client=planning_service.llm_client if enable_judge_metrics else None,
+        llm_client=judge_client,
     )
     logger.info("Metrics evaluator initialized (judge=%s)", enable_judge_metrics)
 
@@ -359,7 +348,10 @@ def main() -> None:
         target_index=target_index,
         target_example=target_example,
         few_shot_examples=few_shot_examples,
-        model_name=model_name,
+        planning_provider=planning_provider,
+        planning_model_name=planning_model_name,
+        judge_provider=judge_provider,
+        judge_model_name=judge_model_name,
         show_prompts=args.show_prompts,
         inference_result=inference_result,
         metric_result=metric_result,

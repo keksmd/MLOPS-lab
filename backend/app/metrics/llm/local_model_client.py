@@ -1,87 +1,69 @@
 from __future__ import annotations
 
-import base64
+import json
 from typing import Any
 
-from langchain_core.messages import BaseMessage
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-from pydantic import RootModel
+from openai import OpenAI
+from pydantic import BaseModel, ValidationError
 
 from ..exceptions import LLMClientError
 from ..local_model_config import LocalModelConfig
 from .base import BaseLLMClient, SchemaT
 
 
-class _JSONObject(RootModel[dict[str, Any]]):
-    """Wrapper schema for arbitrary JSON-object responses."""
-
-
 class LocalModelLLMClient(BaseLLMClient):
-    """OpenAI-compatible local-model client built on top of ChatOpenAI."""
+    """LLM client for the OpenAI-compatible local model gateway.
+
+    This client intentionally avoids tool/function calling. Local capability
+    probing showed reliable support for plain chat completions, JSON mode, and
+    SDK structured parsing on small prompts, while tool calling returned a 500.
+    For planning and judge calls the most stable path is: request JSON mode,
+    parse JSON, and validate it with Pydantic.
+    """
 
     def __init__(self, config: LocalModelConfig) -> None:
         self.config = config
-        self._prompt_template = ChatPromptTemplate.from_messages(
-            [
-                ("system", "{system_prompt}"),
-                ("human", "{user_prompt}"),
-            ]
-        )
-
-        basic_token = base64.b64encode(
-            f"{config.user}:{config.password.get_secret_value()}".encode()
-        ).decode("utf-8")
-        default_headers = {"Authorization": f"Basic {basic_token}"}
-
-        self._chat_model = ChatOpenAI(
-            model=config.model_name,
-            api_key=config.api_key,
+        self._client = OpenAI(
             base_url=config.base_url,
-            default_headers=default_headers,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
+            api_key="dummy",
+            default_headers={"Authorization": config.auth_header},
             max_retries=config.max_retries,
             timeout=config.timeout_seconds,
         )
 
-    def _build_messages(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> list[BaseMessage]:
-        prompt_value = self._prompt_template.invoke(
-            {
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-            }
-        )
-        return list(prompt_value.to_messages())
+    @staticmethod
+    def _extract_text_content(response: Any) -> str:
+        try:
+            content = response.choices[0].message.content
+        except Exception as exc:  # pragma: no cover - malformed provider path
+            raise LLMClientError(
+                "Local model returned an unexpected response shape."
+            ) from exc
+
+        if not isinstance(content, str) or not content.strip():
+            raise LLMClientError("Local model returned empty text content.")
+        return content.strip()
 
     @staticmethod
-    def _message_to_text(message: BaseMessage) -> str:
-        content = message.content
+    def _build_json_mode_system_prompt(
+        *,
+        system_prompt: str,
+        schema: type[BaseModel] | None = None,
+    ) -> str:
+        instructions = [
+            system_prompt.strip(),
+            "Return exactly one valid JSON object.",
+            "Do not use markdown code fences.",
+            "Do not include explanatory text before or after the JSON.",
+        ]
 
-        if isinstance(content, str):
-            return content
+        if schema is not None:
+            schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+            instructions.append(
+                f"The JSON object must conform to this JSON Schema: {schema_json}"
+            )
 
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                    continue
-                if isinstance(item, dict):
-                    text_value = item.get("text")
-                    if isinstance(text_value, str):
-                        parts.append(text_value)
-
-            rendered = "\n".join(part for part in parts if part.strip()).strip()
-            if rendered:
-                return rendered
-
-        raise LLMClientError("Model returned non-text content.")
+        return "\n\n".join(part for part in instructions if part)
 
     def generate_text(
         self,
@@ -90,16 +72,19 @@ class LocalModelLLMClient(BaseLLMClient):
         user_prompt: str,
     ) -> str:
         try:
-            response = self._chat_model.invoke(
-                self._build_messages(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
+            response = self._client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
             )
-        except Exception as exc:  # pragma: no cover - transport/provider path
+        except Exception as exc:  # pragma: no cover - network/provider path
             raise LLMClientError(f"Local model text generation failed: {exc}") from exc
 
-        return self._message_to_text(response)
+        return self._extract_text_content(response)
 
     def generate_json(
         self,
@@ -107,12 +92,39 @@ class LocalModelLLMClient(BaseLLMClient):
         system_prompt: str,
         user_prompt: str,
     ) -> dict[str, Any]:
-        result = self.generate_structured(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            schema=_JSONObject,
-        )
-        return result.root
+        try:
+            response = self._client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self._build_json_mode_system_prompt(
+                            system_prompt=system_prompt,
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+            )
+        except Exception as exc:  # pragma: no cover - network/provider path
+            raise LLMClientError(f"Local model JSON generation failed: {exc}") from exc
+
+        raw_content = self._extract_text_content(response)
+
+        try:
+            parsed = json.loads(raw_content)
+        except json.JSONDecodeError as exc:
+            raise LLMClientError(
+                "Local model returned invalid JSON in JSON mode. "
+                f"Raw content: {raw_content}"
+            ) from exc
+
+        if not isinstance(parsed, dict):
+            raise LLMClientError("Local model returned JSON that is not an object.")
+
+        return parsed
 
     def generate_structured(
         self,
@@ -121,36 +133,42 @@ class LocalModelLLMClient(BaseLLMClient):
         user_prompt: str,
         schema: type[SchemaT],
     ) -> SchemaT:
-        messages = self._build_messages(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self._build_json_mode_system_prompt(
+                            system_prompt=system_prompt,
+                            schema=schema,
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+            )
+        except Exception as exc:  # pragma: no cover - network/provider path
+            raise LLMClientError(
+                f"Local model structured generation failed: {exc}"
+            ) from exc
 
-        strategies: tuple[dict[str, Any], ...] = (
-            {"method": "json_schema", "strict": True},
-            {"method": "function_calling", "strict": True},
-            {},
-        )
+        raw_content = self._extract_text_content(response)
 
-        last_error: Exception | None = None
+        try:
+            parsed = json.loads(raw_content)
+        except json.JSONDecodeError as exc:
+            raise LLMClientError(
+                "Local model returned invalid structured JSON. "
+                f"Raw content: {raw_content}"
+            ) from exc
 
-        for strategy in strategies:
-            try:
-                structured_model = self._chat_model.with_structured_output(
-                    schema,
-                    **strategy,
-                )
-                response = structured_model.invoke(messages)
-
-                if isinstance(response, schema):
-                    return response
-
-                return schema.model_validate(response)
-            except Exception as exc:  # pragma: no cover - transport/provider path
-                last_error = exc
-
-        error_message = "Local model structured generation failed."
-        if last_error is not None:
-            error_message = f"{error_message} Last error: {last_error}"
-
-        raise LLMClientError(error_message)
+        try:
+            return schema.model_validate(parsed)
+        except ValidationError as exc:
+            raise LLMClientError(
+                "Local model returned JSON that does not match the expected schema. "
+                f"Validation error: {exc}"
+            ) from exc

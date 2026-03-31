@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import secrets
 import warnings
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -14,6 +17,9 @@ from pydantic import (
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+ROOT_ENV_PATH = BACKEND_DIR / ".env"
+
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -25,7 +31,7 @@ def parse_cors(v: Any) -> list[str] | str:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file="../.env",
+        env_file=str(ROOT_ENV_PATH),
         env_ignore_empty=True,
         extra="ignore",
     )
@@ -97,6 +103,14 @@ class Settings(BaseSettings):
 
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_MODEL_NAME: str = "meta-llama/llama-3.2-3b-instruct:free"
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+
+    PLANNING_LLM_PROVIDER: Literal["openrouter", "local"] = "openrouter"
+    JUDGE_LLM_PROVIDER: Literal["same_as_planning", "openrouter", "local"] = (
+        "same_as_planning"
+    )
+    LOCAL_MODEL_NAME: str = "ministral-3b-q6k.gguf"
+    LOCAL_MODEL_BASE_URL: str = "https://openai.dada-tuda.ru/v1"
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

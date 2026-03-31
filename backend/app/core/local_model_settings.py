@@ -1,59 +1,45 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 
-from pydantic import Field
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+LOCAL_MODEL_ENV_PATH = BACKEND_DIR / ".env_local_model"
+ROOT_ENV_PATH = BACKEND_DIR / ".env"
 
 
 class LocalModelSettings(BaseSettings):
-    """Settings for the local OpenAI-compatible model gateway.
-
-    The values are intentionally isolated in ``.env_local_model`` so the
-    credentials for the local gateway do not need to be mixed with the main
-    application settings file.
-    """
-
     model_config = SettingsConfigDict(
-        env_file="../.env_local_model",
+        env_file=(str(LOCAL_MODEL_ENV_PATH), str(ROOT_ENV_PATH)),
         env_ignore_empty=True,
         extra="ignore",
     )
 
-    LOCAL_MODEL_USER: str = Field(..., description="Basic-auth username.")
-    LOCAL_MODEL_PASSWORD: str = Field(..., description="Basic-auth password.")
-    LOCAL_MODEL_BASE_URL: str = Field(
-        default="https://openai.dada-tuda.ru/v1",
-        description="Base URL of the OpenAI-compatible local model gateway.",
-    )
-    LOCAL_MODEL_NAME: str = Field(
-        default="ministral-3b-q6k.gguf",
-        description="Default local-model identifier.",
-    )
-    LOCAL_MODEL_TEMPERATURE: float = Field(
-        default=0.0,
-        description="Sampling temperature for local-model generations.",
-    )
-    LOCAL_MODEL_MAX_TOKENS: int = Field(
-        default=1200,
-        description="Maximum number of completion tokens.",
-    )
-    LOCAL_MODEL_TIMEOUT_SECONDS: float = Field(
-        default=120.0,
-        description="HTTP timeout in seconds for local-model calls.",
-    )
-    LOCAL_MODEL_MAX_RETRIES: int = Field(
-        default=3,
-        description="Retry count for transient local-model failures.",
-    )
+    LOCAL_MODEL_USER: str | None = None
+    LOCAL_MODEL_PASSWORD: str | None = None
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
-    def authorization_header(self) -> str:
-        """Return the Basic Authorization header expected by the gateway."""
-        token = base64.b64encode(
+    def basic_auth_header(self) -> str | None:
+        if not self.LOCAL_MODEL_USER or not self.LOCAL_MODEL_PASSWORD:
+            return None
+
+        basic = base64.b64encode(
             f"{self.LOCAL_MODEL_USER}:{self.LOCAL_MODEL_PASSWORD}".encode()
-        ).decode("utf-8")
-        return f"Basic {token}"
+        ).decode()
+        return f"Basic {basic}"
+
+    def require_basic_auth_header(self) -> str:
+        header = self.basic_auth_header
+        if header is None:
+            raise RuntimeError(
+                "LOCAL_MODEL_USER and LOCAL_MODEL_PASSWORD are not set. "
+                "Put them into backend/.env_local_model or the shell."
+            )
+        return header
 
 
 local_model_settings = LocalModelSettings()
