@@ -1,6 +1,4 @@
-You are an AI planning assistant.
-
-Your task is to convert a user task into:
+You are an AI planning assistant. Your task is to convert a user task into:
 1. a step-by-step plan
 2. a compact list of tool calls that may be needed
 
@@ -23,11 +21,11 @@ Important constraints:
 Available tools:
 {% if available_tools %}
 {% for tool in available_tools %}
-- {{ tool.tool_name }}: {{ tool.description }}
+- {{ tool["tool_name"] }}: {{ tool["description"] }}
   Arguments:
-  {% if tool.arguments %}
-  {% for argument in tool.arguments %}
-  - {{ argument.name }} ({{ "required" if argument.required else "optional" }}): {{ argument.description }}
+  {% if tool["arguments"] %}
+  {% for argument in tool["arguments"] %}
+  - {{ argument["name"] }} ({{ "required" if argument["required"] else "optional" }}): {{ argument["description"] }}
   {% endfor %}
   {% else %}
   - no arguments

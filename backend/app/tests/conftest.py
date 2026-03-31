@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+
+os.environ.setdefault("PROJECT_NAME", "test_project")
+os.environ.setdefault("POSTGRES_SERVER", "localhost")
+os.environ.setdefault("POSTGRES_USER", "test_user")
+os.environ.setdefault("FIRST_SUPERUSER", "admin@example.com")
+os.environ.setdefault("FIRST_SUPERUSER_PASSWORD", "testpass")
+
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -221,3 +229,20 @@ def tmp_json_artifacts(
         "dataset": dataset_path,
         "tools": tools_path,
     }
+
+
+_REQUIRED_TEST_ENV = {
+    "PROJECT_NAME": "test-project",
+    "POSTGRES_SERVER": "localhost",
+    "POSTGRES_USER": "test-user",
+    "POSTGRES_PASSWORD": "test-password",
+    "POSTGRES_DB": "test-db",
+    "FIRST_SUPERUSER": "admin@example.com",
+    "FIRST_SUPERUSER_PASSWORD": "test-password",
+    "OPENROUTER_API_KEY": "test-openrouter-key",
+    "OPENROUTER_MODEL_NAME": "test-model",
+}
+
+
+for key, value in _REQUIRED_TEST_ENV.items():
+    os.environ.setdefault(key, value)

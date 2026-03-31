@@ -1,3 +1,11 @@
+import os
+
+os.environ.setdefault("PROJECT_NAME", "test_project")
+os.environ.setdefault("POSTGRES_SERVER", "localhost")
+os.environ.setdefault("POSTGRES_USER", "test_user")
+os.environ.setdefault("FIRST_SUPERUSER", "admin@example.com")
+os.environ.setdefault("FIRST_SUPERUSER_PASSWORD", "testpass")
+
 from collections.abc import Generator
 
 import pytest
