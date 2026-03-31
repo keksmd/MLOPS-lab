@@ -29,6 +29,14 @@ jobs:
       - name: Run tests
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
+        env:
+          PROJECT_NAME: test_project
+          POSTGRES_SERVER: localhost
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: test_db
+          FIRST_SUPERUSER: admin@example.com
+          FIRST_SUPERUSER_PASSWORD: testpass
       - run: docker compose down -v --remove-orphans
       - name: Store coverage files
         uses: actions/upload-artifact@v7
