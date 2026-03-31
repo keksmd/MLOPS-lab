@@ -22,9 +22,15 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_DB: app
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: changethis
+            PROJECT_NAME: test_project
+            POSTGRES_SERVER: 127.0.0.1
+            POSTGRES_PORT: 5432
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: changethis
+            POSTGRES_DB: app
+            FIRST_SUPERUSER: admin@example.com
+            FIRST_SUPERUSER_PASSWORD: changethis
+            SECRET_KEY: changethis
         ports:
           - 5432:5432
         options: >-
